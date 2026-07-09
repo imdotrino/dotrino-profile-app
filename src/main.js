@@ -320,8 +320,11 @@ async function vaultMode (prefillQr) {
   let intentQr = null
   try { const r = sessionStorage.getItem('cc-pair-intent'); if (r) { sessionStorage.removeItem('cc-pair-intent'); intentQr = JSON.parse(r) } } catch (_) {}
   const status = intentQr ? { paired: false } : await id.vaultStatus().catch(() => ({ paired: false }))
+  // Cert de dispositivo VENCIDO = ya no estás conectado (el vault rechaza todo con
+  // "no autorizado"): tratarlo como no emparejado, con aviso, y ofrecer re-conectar.
+  const expired = status.paired && status.exp && status.exp <= Date.now()
 
-  if (status.paired) {
+  if (status.paired && !expired) {
     const fp = await vaultFingerprint(status.master)
     vaultShell('Tu bóveda', `<div class="vault-wrap">
       <div class="banner ok">✓ Este dispositivo está conectado a tu bóveda.</div>
@@ -329,6 +332,7 @@ async function vaultMode (prefillQr) {
         <li>Dispositivo: <code>${esc(status.deviceId)}</code></li>
         <li>Bóveda (huella): <code>${esc(fp)}</code></li>
         <li>Permisos: <code>${esc((status.scope || []).join(', '))}</code></li>
+        ${status.exp ? `<li>Conexión válida hasta: <code>${esc(new Date(status.exp).toLocaleString())}</code></li>` : ''}
       </ul>
       <h2 style="font-size:16px;margin:18px 0 6px">Tus dispositivos</h2>
       <div id="devlist" class="muted">Cargando…</div>
@@ -342,11 +346,18 @@ async function vaultMode (prefillQr) {
         const exp = d.exp ? ' · expira ' + new Date(d.exp).toLocaleDateString() : ''
         return `<li>· <code>${esc(d.deviceId || '????')}</code>${me} ${esc(d.label || '')}<span class="muted">${esc(exp)}</span></li>`
       }).join('') + '</ul>'
-    }).catch(() => { const box = document.getElementById('devlist'); if (box) box.textContent = 'No se pudo cargar (¿el vault está encendido?).' })
+    }).catch((e) => {
+      const box = document.getElementById('devlist'); if (!box) return
+      // Distinguir "no autorizado" (cert rechazado/revocado) de "vault apagado".
+      box.textContent = /no autorizado/i.test(e?.message || '')
+        ? 'El vault rechazó este dispositivo (' + e.message + '). Vuelve a conectarlo con `dotrino-vault pair`.'
+        : 'No se pudo cargar (¿el vault está encendido?).'
+    })
     return
   }
 
   vaultShell('Conectar a tu bóveda', `<div class="vault-wrap">
+    ${expired ? '<div class="banner bad">Tu conexión con la bóveda <strong>venció</strong> (' + esc(new Date(status.exp).toLocaleDateString()) + '). Vuelve a conectar este dispositivo.</div>' : ''}
     <p>Conecta este navegador a tu <strong>bóveda</strong> (el programa <code>dotrino-vault</code> en tu PC),
        para que tu información viva en tu propio servidor. En tu PC ejecuta <code>dotrino-vault pair</code> y
        <strong>escaneá el QR</strong>, abrí su imagen/archivo, o pegá el código:</p>
