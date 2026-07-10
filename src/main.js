@@ -17,6 +17,7 @@ import { avatarDataUri } from '@dotrino/identity/capabilities'
 import { createVaultReputation, canonicalStringify } from '@dotrino/reputation'
 import { createVaultProfileProvider } from '@dotrino/profile'
 import '@dotrino/profile' // registra el custom element <dotrino-profile>
+import '@dotrino/topbar'  // barra superior estándar (marca+volver+idioma+perfil+support)
 import jsQR from 'jsqr' // lector de QR client-side (misma lib que dotrino-qrreader)
 
 const mount = document.getElementById('app')
@@ -103,30 +104,24 @@ function injectVaultStyles () {
     .vault-wrap .scanrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .vault-wrap .scanbox video { width: 100%; max-width: 360px; border-radius: 10px; background: #000; display: block; margin: 8px 0; }
     .vault-wrap details > summary { cursor: pointer; margin-top: 10px; color: #777; }
-    /* Topbar estándar del ecosistema (CONVENCIONES §5/§6): marca · acciones · moneda. */
+    /* Barra superior estándar del ecosistema: <dotrino-topbar> (@dotrino/topbar),
+       tematizada en CLARO para esta página. La marca a medida va por slot. */
     #app:has(.vault-page) { padding: 0; align-items: stretch; }
     .vault-page { width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
-    .vault-page .topbar { display: flex; align-items: center; gap: 12px; padding: 10px max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left)); padding-top: max(10px, env(safe-area-inset-top)); background: #fff; border-bottom: 1px solid #e3e9ed; position: sticky; top: 0; z-index: 50; }
+    .vault-topbar {
+      position: sticky; top: 0; z-index: 50;
+      --dotrino-topbar-bg: #fff; --dotrino-topbar-border: #e3e9ed;
+      --dotrino-topbar-text: #181c1e; --dotrino-topbar-muted: #4a5560;
+      --dotrino-topbar-accent: #00658c;
+    }
     .vault-page .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .vault-page .brand-logo { width: 36px; height: 36px; border-radius: 9px; }
     .vault-page .brand-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
     .vault-page .brand-name { font-weight: 700; font-size: 1.15rem; color: #181c1e; }
     .vault-page .brand-tag { font-size: .72rem; color: #4a5560; }
-    .vault-page .actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
-    .vault-page .profile-btn { background: transparent; border: 1px solid #cfd8de; width: 38px; height: 38px; padding: 0; border-radius: 10px; color: #00658c; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-    .vault-page .profile-btn svg { width: 19px; height: 19px; }
-    .vault-page .topbar-coin { flex: 0 0 auto; }
     .vault-page .vault-main { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 1.2rem 1rem; }
     .vault-page .vault-card { max-width: 560px; width: 100%; text-align: left; }
     .vault-page .vault-card h1 { font-size: 1.3rem; color: #181c1e; margin: 0 0 1rem; }
-    @media (max-width: 560px) {
-      .vault-page .topbar { flex-wrap: wrap; row-gap: 8px; }
-      .vault-page .brand { order: 1; flex: 1 1 auto; }
-      .vault-page .topbar-coin { order: 2; }
-      .vault-page .actions { order: 3; flex-basis: 100%; justify-content: flex-end; margin-left: 0; }
-    }
-    .vault-page .profile-btn { overflow: hidden; padding: 0; }
-    .vault-page .profile-btn img { width: 100%; height: 100%; border-radius: 8px; object-fit: cover; display: block; }
     /* Gestor de perfiles (modal) */
     .pf-overlay { position: fixed; inset: 0; background: rgba(20,28,34,.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
     .pf-panel { background: #fff; border: 1px solid #e3e9ed; border-radius: 16px; padding: 1.4rem; max-width: 440px; width: 100%; position: relative; box-shadow: 0 20px 50px rgba(74,85,96,.2); max-height: 86vh; overflow-y: auto; }
@@ -226,28 +221,24 @@ async function openMyProfile () {
 
 function vaultShell (title, inner, tag = 'Tu identidad') {
   mount.innerHTML = `<div class="vault-page">
-    <header class="topbar">
-      <div class="brand"><img class="brand-logo" src="/images/imagoWBG.png" alt="" /><div class="brand-text"><span class="brand-name">Dotrino</span><span class="brand-tag">${esc(tag)}</span></div></div>
-      <div class="actions">
-        <button class="profile-btn" id="cc-myprofile" title="Mi perfil" aria-label="Mi perfil">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" /></svg>
-        </button>
-      </div>
-      <dotrino-support class="topbar-coin" href="https://ko-fi.com/dotrino" repo="imdotrino/dotrino_profile" discord="https://discord.gg/D648uq7cth"></dotrino-support>
-    </header>
+    <dotrino-topbar class="vault-topbar" brand-href="https://dotrino.com/"
+      support-repo="imdotrino/dotrino_profile" support-discord="https://discord.gg/D648uq7cth" profile>
+      <div slot="brand" class="brand"><img class="brand-logo" src="/images/imagoWBG.png" alt="" /><div class="brand-text"><span class="brand-name">Dotrino</span><span class="brand-tag">${esc(tag)}</span></div></div>
+    </dotrino-topbar>
     <main class="vault-main"><div class="vault-card">${title ? `<h1>${esc(title)}</h1>` : ''}${inner}</div></main>
   </div>`
   decorateProfileButton()
 }
 
-// El botón del topbar muestra el AVATAR del perfil activo y abre el gestor de perfiles.
+// El botón de perfil del topbar (§6.1) muestra el AVATAR del perfil activo y abre
+// el gestor de perfiles. El topbar emite 'dotrino-profile'; el avatar va por atributo.
 async function decorateProfileButton () {
-  const pb = document.getElementById('cc-myprofile'); if (!pb) return
-  pb.onclick = openMyProfile // abre <dotrino-profile mode="self"> con el switcher de perfiles
+  const tb = mount.querySelector('dotrino-topbar'); if (!tb) return
+  tb.addEventListener('dotrino-profile', openMyProfile)
   try {
     const id = await Identity.connect()
     const cur = await id.currentProfile()
-    if (cur?.pubkey) { pb.innerHTML = `<img src="${avatarDataUri(cur.pubkey, { size: 72 })}" alt="" />`; pb.title = cur.name || 'Perfiles' }
+    if (cur?.pubkey) tb.setAttribute('avatar', avatarDataUri(cur.pubkey, { size: 72 }))
   } catch (_) { /* deja el ícono genérico */ }
 }
 
