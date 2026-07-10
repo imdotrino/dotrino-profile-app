@@ -257,6 +257,7 @@ async function openProfilesPanel () {
   let id
   try { id = await Identity.connect() } catch { return }
   const profiles = await id.listProfiles().catch(() => [])
+  const lock = await id.profileLockStatus?.().catch(() => null) || { protected: false }
   const overlay = document.createElement('div'); overlay.className = 'pf-overlay'
   const close = () => overlay.remove()
   const reload = () => location.reload()
@@ -277,8 +278,10 @@ async function openProfilesPanel () {
     <div class="pf-actions">
       <button class="btn" id="pf-new">+ Crear perfil</button>
       <button class="btn ghost" id="pf-rename">Renombrar el activo</button>
+      <button class="btn ghost" id="pf-lock">${lock.protected ? '🔓 Quitar el PIN' : '🔒 Proteger con PIN'}</button>
       <button class="btn ghost" id="pf-mine">Ver mi perfil público</button>
     </div>
+    <p class="muted" style="font-size:12.5px">El PIN protege el perfil activo <strong>solo en este dispositivo</strong> (no se comparte ni se sincroniza). Se pide una vez por pestaña; refrescar no lo vuelve a pedir.</p>
     <div id="pf-form"></div>
   </div>`
   document.body.appendChild(overlay)
@@ -289,6 +292,14 @@ async function openProfilesPanel () {
   overlay.querySelector('#pf-mine').onclick = () => { close(); openMyProfile() }
   overlay.querySelector('#pf-new').onclick = () => nameForm(overlay, 'Nombre del nuevo perfil (opcional)', async (name) => { await id.createProfile(name); reload() })
   overlay.querySelector('#pf-rename').onclick = () => nameForm(overlay, 'Nuevo nombre', async (name) => { await id.renameProfile(null, name); reload() })
+  overlay.querySelector('#pf-lock').onclick = () => {
+    if (lock.protected) {
+      confirmDelete(overlay, null, async () => { await id.removeProfilePassword(); reload() },
+        '¿Quitar el PIN de este perfil en este dispositivo?')
+    } else {
+      pinForm(overlay, async (pin) => { await id.setProfilePassword(pin); reload() })
+    }
+  }
 }
 
 // Formulario inline de nombre (sin prompt() del navegador — CONVENCIONES §5).
@@ -299,6 +310,27 @@ function nameForm (overlay, label, onSubmit) {
   const go = async () => { host.querySelector('#pf-namego').disabled = true; await onSubmit(input.value.trim()) }
   host.querySelector('#pf-namego').onclick = go
   input.onkeydown = (e) => { if (e.key === 'Enter') go() }
+}
+
+// Formulario inline de PIN (nuevo candado local): pide el PIN dos veces.
+function pinForm (overlay, onSubmit) {
+  const host = overlay.querySelector('#pf-form')
+  host.innerHTML = `<div class="pf-nameform" style="flex-wrap:wrap">
+    <input id="pf-pin1" type="password" inputmode="numeric" maxlength="64" placeholder="PIN (mín. 4)" />
+    <input id="pf-pin2" type="password" inputmode="numeric" maxlength="64" placeholder="Repite el PIN" />
+    <button class="btn" id="pf-pingo">Proteger</button>
+    <span class="muted" id="pf-pinerr" style="flex-basis:100%"></span></div>`
+  const p1 = host.querySelector('#pf-pin1'); const p2 = host.querySelector('#pf-pin2')
+  const err = host.querySelector('#pf-pinerr'); p1.focus()
+  const go = async () => {
+    err.textContent = ''
+    if (p1.value.length < 4) { err.textContent = 'Mínimo 4 caracteres.'; return }
+    if (p1.value !== p2.value) { err.textContent = 'No coinciden.'; return }
+    host.querySelector('#pf-pingo').disabled = true
+    try { await onSubmit(p1.value) } catch (e) { err.textContent = e.message; host.querySelector('#pf-pingo').disabled = false }
+  }
+  host.querySelector('#pf-pingo').onclick = go
+  p2.onkeydown = (e) => { if (e.key === 'Enter') go() }
 }
 
 // Confirmación inline de borrado (sin confirm() del navegador).
