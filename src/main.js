@@ -215,7 +215,12 @@ async function decorateProfileButton () {
   try {
     const id = await Identity.connect()
     const cur = await id.currentProfile()
-    if (cur?.pubkey) tb.setAttribute('avatar', avatarDataUri(cur.pubkey, { size: 72 }))
+    // Preferir la FOTO subida del perfil activo (me.avatar, data-URI); si no se
+    // subió ninguna, caer al identicon determinista del pubkey.
+    let avatar = null
+    try { const me = await id.getMe(); if (me && me.avatar) avatar = me.avatar } catch (_) {}
+    if (!avatar && cur?.pubkey) avatar = avatarDataUri(cur.pubkey, { size: 72 })
+    if (avatar) tb.setAttribute('avatar', avatar)
   } catch (_) { /* deja el ícono genérico */ }
 }
 
