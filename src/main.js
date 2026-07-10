@@ -70,9 +70,10 @@ async function connectProvider() {
   return { id, provider: createVaultProfileProvider({ identity: id, reputation }) }
 }
 
-function makeProfile({ pubkey, name, since, mode, modal }) {
+function makeProfile({ pubkey, name, since, mode, modal, manage }) {
   const el = document.createElement('dotrino-profile')
   if (modal) el.setAttribute('modal', '')
+  if (manage) el.setAttribute('manage', '') // crear perfil habilitado SOLO aquí (profile.dotrino.com)
   el.setAttribute('mode', mode)
   el.setAttribute('lang', 'auto')
   el.setAttribute('pubkey', pubkey)
@@ -122,30 +123,17 @@ function injectVaultStyles () {
     .vault-page .vault-main { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 1.2rem 1rem; }
     .vault-page .vault-card { max-width: 560px; width: 100%; text-align: left; }
     .vault-page .vault-card h1 { font-size: 1.3rem; color: #181c1e; margin: 0 0 1rem; }
-    /* Gestor de perfiles (modal) */
-    .pf-overlay { position: fixed; inset: 0; background: rgba(20,28,34,.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
-    .pf-panel { background: #fff; border: 1px solid #e3e9ed; border-radius: 16px; padding: 1.4rem; max-width: 440px; width: 100%; position: relative; box-shadow: 0 20px 50px rgba(74,85,96,.2); max-height: 86vh; overflow-y: auto; }
-    .pf-panel h2 { margin: 0 0 .4rem; font-size: 1.2rem; color: #181c1e; }
-    .pf-panel .muted { color: #4a5560; font-size: .85rem; margin: 0 0 1rem; }
-    .pf-close { position: absolute; top: 10px; right: 12px; background: transparent; border: none; font-size: 1.3rem; color: #4a5560; cursor: pointer; }
-    .pf-list { display: flex; flex-direction: column; gap: 8px; }
-    .pf-row { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid #e3e9ed; border-radius: 12px; }
-    .pf-row.current { border-color: #00658c; background: #f0f7fa; }
-    .pf-av { width: 40px; height: 40px; border-radius: 10px; flex: 0 0 auto; }
-    .pf-info { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; }
-    .pf-name { font-weight: 600; color: #181c1e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pf-badge { font-size: .7rem; font-weight: 700; color: #00658c; border: 1px solid #00658c; border-radius: 999px; padding: 2px 8px; flex: 0 0 auto; }
-    .pf-rowbtns { display: flex; gap: 6px; flex: 0 0 auto; align-items: center; }
-    .pf-del { background: transparent; border: none; cursor: pointer; font-size: 1rem; opacity: .7; }
-    .pf-del:hover { opacity: 1; }
-    .pf-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1rem; }
+    /* Sección de PIN (inline en la página, no popup) */
+    .pin-box { margin-top: 1.2rem; padding: 1rem 1.1rem; border: 1px solid #e3e9ed; border-radius: 14px; background: #fff; }
+    .pin-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .pin-title { font-weight: 700; color: #181c1e; }
+    .pin-box .btn { display: inline-flex; align-items: center; padding: 9px 14px; border: 0; border-radius: 999px; background: #1a73e8; color: #fff; font-size: 14px; cursor: pointer; }
+    .pin-box .btn.ghost { background: #eef2ff; color: #1a73e8; }
+    .pin-box .btn.danger { background: #d93025; color: #fff; }
+    .pin-box .btn[disabled] { opacity: .5; cursor: default; }
     .pf-nameform, .pf-confirm { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
     .pf-nameform input { flex: 1 1 auto; padding: 9px 11px; border: 1px solid #cfd8de; border-radius: 8px; font-size: 14px; }
-    .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: #b3261e; }
-    .pf-overlay .btn { display: inline-flex; align-items: center; padding: 9px 14px; border: 0; border-radius: 999px; background: #1a73e8; color: #fff; font-size: 14px; cursor: pointer; }
-    .pf-overlay .btn.ghost { background: #eef2ff; color: #1a73e8; }
-    .pf-overlay .btn.danger { background: #d93025; color: #fff; }
-    .pf-overlay .btn[disabled] { opacity: .5; cursor: default; }`
+    .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: #b3261e; }`
   document.head.appendChild(s)
 }
 
@@ -205,20 +193,6 @@ function scanWithCamera (host) {
   })
 }
 
-// Topbar estándar (CONVENCIONES §5/§6.1): marca a la izquierda; perfil + moneda a la derecha.
-async function openMyProfile () {
-  try {
-    const { id, provider } = await connectProvider()
-    const cur = id.currentProfile ? await id.currentProfile().catch(() => null) : null
-    const pubkey = cur?.pubkey || (id && id.me && id.me.publickey)
-    if (!pubkey) return
-    // El componente <dotrino-profile mode="self"> trae el switcher de perfiles (acción global).
-    const el = makeProfile({ pubkey, name: cur?.name || (id && id.me && id.me.nickname), mode: 'self', modal: true })
-    el.provider = provider
-    document.body.appendChild(el)
-  } catch (_) { /* perfil opcional */ }
-}
-
 function vaultShell (title, inner, tag = 'Tu identidad') {
   mount.innerHTML = `<div class="vault-page">
     <dotrino-topbar class="vault-topbar" brand-href="https://dotrino.com/"
@@ -235,7 +209,9 @@ function vaultShell (title, inner, tag = 'Tu identidad') {
 // PIN + "ver mi perfil". El topbar emite 'dotrino-profile'; el avatar va por atributo.
 async function decorateProfileButton () {
   const tb = mount.querySelector('dotrino-topbar'); if (!tb) return
-  tb.addEventListener('dotrino-profile', openProfilesPanel)
+  // profile.dotrino.com ES el hub de identidad: el avatar lleva a la página del
+  // perfil (donde está todo inline), en vez de abrir un popup redundante.
+  tb.addEventListener('dotrino-profile', () => { location.href = '/' })
   try {
     const id = await Identity.connect()
     const cur = await id.currentProfile()
@@ -243,68 +219,34 @@ async function decorateProfileButton () {
   } catch (_) { /* deja el ícono genérico */ }
 }
 
-// Gestor de perfiles: crear / cambiar / renombrar / borrar. Cambiar/crear RECARGA la página
-// (no reactivo, por diseño): las apps ya abiertas conservan su perfil; las nuevas toman el activo.
-async function openProfilesPanel () {
+// Sección de PIN INLINE en la página (NO en popup). El PIN protege el perfil
+// activo SOLO en este dispositivo. Cambiar/crear/renombrar perfil lo hace el
+// componente <dotrino-profile mode="self" manage> (switcher integrado); aquí solo
+// va lo que es exclusivo de esta página: el candado por PIN.
+async function renderPinSection (host) {
   let id
   try { id = await Identity.connect() } catch { return }
-  const profiles = await id.listProfiles().catch(() => [])
   const lock = await id.profileLockStatus?.().catch(() => null) || { protected: false }
-  const overlay = document.createElement('div'); overlay.className = 'pf-overlay'
-  const close = () => overlay.remove()
-  const reload = () => location.reload()
-  const rows = profiles.map((p) => `
-    <div class="pf-row${p.current ? ' current' : ''}" data-id="${esc(p.id)}">
-      <img class="pf-av" src="${avatarDataUri(p.pubkey || p.id, { size: 64 })}" alt="" />
-      <div class="pf-info"><span class="pf-name">${esc(p.name || 'Perfil sin nombre')}</span>${p.current ? '<span class="pf-badge">activo</span>' : ''}</div>
-      <div class="pf-rowbtns">
-        ${p.current ? '' : `<button class="btn ghost pf-switch" data-id="${esc(p.id)}">Usar</button>`}
-        ${profiles.length > 1 ? `<button class="pf-del" data-id="${esc(p.id)}" title="Borrar perfil" aria-label="Borrar perfil">🗑</button>` : ''}
+  host.innerHTML = `
+    <div class="pin-box">
+      <div class="pin-row">
+        <span class="pin-title">🔒 Protección con PIN</span>
+        <button class="btn ghost" id="pin-toggle">${lock.protected ? 'Quitar el PIN' : 'Proteger con PIN'}</button>
       </div>
-    </div>`).join('')
-  overlay.innerHTML = `<div class="pf-panel">
-    <button class="pf-close" aria-label="Cerrar">✕</button>
-    <h2>Tus perfiles</h2>
-    <p class="muted">Podés tener varios perfiles (identidades) en este dispositivo, cada uno con su propia bóveda y sus propios datos. Las apps usan el <strong>perfil activo</strong>; al cambiar, la página se recarga.</p>
-    <div class="pf-list">${rows}</div>
-    <div class="pf-actions">
-      <button class="btn" id="pf-new">+ Crear perfil</button>
-      <button class="btn ghost" id="pf-rename">Renombrar el activo</button>
-      <button class="btn ghost" id="pf-lock">${lock.protected ? '🔓 Quitar el PIN' : '🔒 Proteger con PIN'}</button>
-      <button class="btn ghost" id="pf-mine">Ver mi perfil público</button>
-    </div>
-    <p class="muted" style="font-size:12.5px">El PIN protege el perfil activo <strong>solo en este dispositivo</strong> (no se comparte ni se sincroniza). Se pide una vez por pestaña; refrescar no lo vuelve a pedir.</p>
-    <div id="pf-form"></div>
-  </div>`
-  document.body.appendChild(overlay)
-  overlay.querySelector('.pf-close').onclick = close
-  overlay.onclick = (e) => { if (e.target === overlay) close() }
-  overlay.querySelectorAll('.pf-switch').forEach((b) => { b.onclick = async () => { b.disabled = true; await id.switchProfile(b.dataset.id); reload() } })
-  overlay.querySelectorAll('.pf-del').forEach((b) => { b.onclick = () => confirmDelete(overlay, b, async () => { await id.deleteProfile(b.dataset.id); reload() }) })
-  overlay.querySelector('#pf-mine').onclick = () => { close(); openMyProfile() }
-  overlay.querySelector('#pf-new').onclick = () => nameForm(overlay, 'Nombre del nuevo perfil (opcional)', async (name) => { await id.createProfile(name); reload() })
-  overlay.querySelector('#pf-rename').onclick = () => nameForm(overlay, 'Nuevo nombre', async (name) => { await id.renameProfile(null, name); reload() })
-  overlay.querySelector('#pf-lock').onclick = () => {
+      <p class="muted" style="font-size:12.5px;margin:6px 0 0">Protege el perfil activo <strong>solo en este dispositivo</strong> (no se comparte ni se sincroniza). Se pide una vez por pestaña; refrescar no lo vuelve a pedir.</p>
+      <div id="pf-form"></div>
+    </div>`
+  host.querySelector('#pin-toggle').onclick = () => {
     if (lock.protected) {
-      confirmDelete(overlay, null, async () => { await id.removeProfilePassword(); reload() },
-        '¿Quitar el PIN de este perfil en este dispositivo?')
+      confirmDelete(host, null, async () => { await id.removeProfilePassword(); location.reload() },
+        '¿Quitar el PIN de este perfil en este dispositivo?', 'Quitar el PIN')
     } else {
-      pinForm(overlay, async (pin) => { await id.setProfilePassword(pin); reload() })
+      pinForm(host, async (pin) => { await id.setProfilePassword(pin); location.reload() })
     }
   }
 }
 
-// Formulario inline de nombre (sin prompt() del navegador — CONVENCIONES §5).
-function nameForm (overlay, label, onSubmit) {
-  const host = overlay.querySelector('#pf-form')
-  host.innerHTML = `<div class="pf-nameform"><input id="pf-nameinput" type="text" maxlength="40" placeholder="${esc(label)}" /><button class="btn" id="pf-namego">OK</button></div>`
-  const input = host.querySelector('#pf-nameinput'); input.focus()
-  const go = async () => { host.querySelector('#pf-namego').disabled = true; await onSubmit(input.value.trim()) }
-  host.querySelector('#pf-namego').onclick = go
-  input.onkeydown = (e) => { if (e.key === 'Enter') go() }
-}
-
-// Formulario inline de PIN (nuevo candado local): pide el PIN dos veces.
+// Formulario inline de PIN (candado local): pide el PIN dos veces.
 function pinForm (overlay, onSubmit) {
   const host = overlay.querySelector('#pf-form')
   host.innerHTML = `<div class="pf-nameform" style="flex-wrap:wrap">
@@ -326,9 +268,9 @@ function pinForm (overlay, onSubmit) {
 }
 
 // Confirmación inline de borrado (sin confirm() del navegador).
-function confirmDelete (overlay, btn, onYes) {
+function confirmDelete (overlay, btn, onYes, msg = '¿Borrar este perfil y todos sus datos? No se puede deshacer.', yes = 'Borrar') {
   const host = overlay.querySelector('#pf-form')
-  host.innerHTML = `<div class="pf-confirm"><span>¿Borrar este perfil y todos sus datos? No se puede deshacer.</span><button class="btn danger" id="pf-yes">Borrar</button><button class="btn ghost" id="pf-no">Cancelar</button></div>`
+  host.innerHTML = `<div class="pf-confirm"><span>${esc(msg)}</span><button class="btn danger" id="pf-yes">${esc(yes)}</button><button class="btn ghost" id="pf-no">Cancelar</button></div>`
   host.querySelector('#pf-no').onclick = () => { host.innerHTML = '' }
   host.querySelector('#pf-yes').onclick = async () => { host.querySelector('#pf-yes').disabled = true; await onYes() }
 }
@@ -465,7 +407,16 @@ async function vaultMode (prefillQr) {
 async function main() {
   const data = parseHash()
 
-  if (data.mode === 'vault') return vaultMode(data.qr)
+  // SIEMPRE limpiar el hash de la URL: `#vault=` lleva el TOKEN de emparejamiento
+  // (un secreto de 5 min) y no debe quedar en la barra ni en el historial; los
+  // otros modos (#v=, #pubkey) ya se capturaron en `data`. replaceState no
+  // dispara 'hashchange', así que no recarga. El reingreso al emparejamiento
+  // tras cambiar de perfil NO depende del hash (usa sessionStorage 'cc-pair-intent').
+  let pendingPair = false
+  try { pendingPair = !!sessionStorage.getItem('cc-pair-intent') } catch (_) {}
+  if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search) } catch (_) {} }
+
+  if (data.mode === 'vault' || pendingPair) return vaultMode(data.qr)
 
   // ── VALIDAR: firma del contenido + reputación del remitente, en un paso ──
   if (data.mode === 'validate') {
@@ -506,14 +457,16 @@ async function main() {
     pubkey = cur?.pubkey || (id && id.me && id.me.publickey); name = cur?.name || (id && id.me && id.me.nickname); mode = 'self'
   }
 
-  // SELF (tu perfil): topbar (marca + avatar + moneda) + el componente inline, que YA trae
-  // el switcher de perfiles (acción global del componente shared, igual que en las apps).
+  // SELF (tu perfil): topbar + el componente inline, que YA trae el switcher de
+  // perfiles (cambiar) y —AQUÍ, con `manage`— crear perfil. Debajo, la sección de
+  // PIN, exclusiva de ESTA página (no aparece en el popup de las otras apps).
   if (mode === 'self') {
     injectVaultStyles()
-    vaultShell('Tu perfil', '<div class="vault-wrap"><div id="self-prof"></div></div>', 'Perfiles')
-    const el = makeProfile({ pubkey, name, since, mode, modal: false })
+    vaultShell('Tu perfil', '<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div></div>', 'Perfiles')
+    const el = makeProfile({ pubkey, name, since, mode, modal: false, manage: true })
     el.provider = provider
     document.getElementById('self-prof')?.appendChild(el)
+    renderPinSection(document.getElementById('pin-section'))
     return
   }
 
