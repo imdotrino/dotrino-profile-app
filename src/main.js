@@ -231,10 +231,11 @@ function vaultShell (title, inner, tag = 'Tu identidad') {
 }
 
 // El botón de perfil del topbar (§6.1) muestra el AVATAR del perfil activo y abre
-// el gestor de perfiles. El topbar emite 'dotrino-profile'; el avatar va por atributo.
+// el GESTOR de perfiles (esta app ES el hub de identidad): switcher + proteger con
+// PIN + "ver mi perfil". El topbar emite 'dotrino-profile'; el avatar va por atributo.
 async function decorateProfileButton () {
   const tb = mount.querySelector('dotrino-topbar'); if (!tb) return
-  tb.addEventListener('dotrino-profile', openMyProfile)
+  tb.addEventListener('dotrino-profile', openProfilesPanel)
   try {
     const id = await Identity.connect()
     const cur = await id.currentProfile()
