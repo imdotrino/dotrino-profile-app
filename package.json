@@ -10,10 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@dotrino/identity": "0.20.0",
+    "@dotrino/identity": "0.21.0",
     "@dotrino/profile": "0.13.0",
     "@dotrino/reputation": "0.8.0",
-    "@dotrino/topbar": "0.2.3",
+    "@dotrino/topbar": "0.4.0",
     "jsqr": "1.4.0"
   },
   "devDependencies": {
