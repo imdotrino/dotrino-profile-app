@@ -53,22 +53,48 @@ async function verifySig(pubkeyStr, data, sigB64) {
   } catch { return false }
 }
 
-function parseHash() {
+// Enrutado: las VISTAS van por PATH — `/` (tu perfil), `/myvault` (tu bóveda),
+// `/vault` (conectar a la bóveda del PC). El `#fragment` queda SOLO para datos que
+// NO deben llegar al servidor (privacidad de Dotrino): `#v=` (validar firma),
+// `#<pubkey>` (calificar) y `#vault=<token>` (token de emparejamiento, un secreto).
+// Los enlaces legacy de vista (`#myvault`, `#vault`) se siguen aceptando y se migran
+// a su path en `main()`. GitHub Pages sirve `404.html` (copia del index) para las
+// rutas sin archivo, y la SPA enruta por `location.pathname`.
+//
+// `appBase()` = prefijo bajo el que se sirve la app (`/` en profile.dotrino.com, o
+// `/<repo>/` en el mirror github.io) para que los enlaces funcionen en ambos.
+function appBase () {
+  let p = location.pathname.replace(/index\.html$/i, '').replace(/(myvault|vault)\/?$/i, '')
+  if (!p.endsWith('/')) p += '/'
+  return p
+}
+function viewUrl (view) { return appBase() + view } // view: '' | 'myvault' | 'vault'
+
+function parseRoute() {
   const h = location.hash.replace(/^#/, '').trim()
-  if (!h) return { mode: 'self' }
-  if (h === 'myvault') return { mode: 'selfvault' }
-  if (h === 'vault') return { mode: 'vault' }
-  if (h.startsWith('vault=')) { try { return { mode: 'vault', qr: JSON.parse(b64urlDecode(h.slice(6))) } } catch { return { mode: 'vault' } } }
+  // 1) DATOS en el #fragment (viajan sin tocar el servidor) — PRIORIDAD.
   if (h.startsWith('v=')) {
     try { return { mode: 'validate', payload: JSON.parse(b64urlDecode(h.slice(2))) } } catch { return { mode: 'invalid' } }
   }
-  if (h.includes('=')) {
-    const q = new URLSearchParams(h)
-    const p = q.get('p') || q.get('pubkey')
-    if (!p) return { mode: 'invalid' }
-    return { mode: 'rate', pubkey: b64urlDecode(p), name: q.get('name') ? b64urlDecode(q.get('name')) : '', since: q.get('since') || '' }
+  if (h.startsWith('vault=')) {
+    try { return { mode: 'vault', qr: JSON.parse(b64urlDecode(h.slice(6))), token: true } } catch { return { mode: 'vault', token: true } }
   }
-  return { mode: 'rate', pubkey: b64urlDecode(h), name: '', since: '' }
+  // 2) VISTAS por PATH (o hash legacy #myvault/#vault → se migra al path en main()).
+  const seg = location.pathname.replace(/\/+$/, '').split('/').pop().toLowerCase()
+  if (seg === 'myvault' || h === 'myvault') return { mode: 'selfvault', legacy: h === 'myvault' }
+  if (seg === 'vault' || h === 'vault') return { mode: 'vault', legacy: h === 'vault' }
+  // 3) CALIFICAR (#<pubkey> o #p=…) — dato público, se queda como hash.
+  if (h) {
+    if (h.includes('=')) {
+      const q = new URLSearchParams(h)
+      const p = q.get('p') || q.get('pubkey')
+      if (!p) return { mode: 'invalid' }
+      return { mode: 'rate', pubkey: b64urlDecode(p), name: q.get('name') ? b64urlDecode(q.get('name')) : '', since: q.get('since') || '' }
+    }
+    return { mode: 'rate', pubkey: b64urlDecode(h), name: '', since: '' }
+  }
+  // 4) Nada → tu perfil.
+  return { mode: 'self' }
 }
 
 async function connectProvider() {
@@ -634,19 +660,20 @@ async function selfVaultMode () {
   } catch {}
   const backBtn = backHost ? `<p style="margin-top:14px"><button class="btn ghost" id="svBack" data-testid="sv-back">${esc(svt('back', backHost))}</button></p>` : ''
 
-  let id
-  try { id = await Identity.connect() } catch {}
-  if (!id?.me?.publickey) {
-    vaultShell(svt('h'), `<div class="vault-wrap"><p class="status">${esc(svt('need_id'))} <a href="/" style="color:#00658c">${esc(svt('need_id_link'))}</a>.</p>${backBtn}</div>`, svt('h'))
-    wireLangReload()
-    document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
-    return
-  }
-
+  // Pintar el shell de carga ANTES de conectar la identidad (que puede tardar o,
+  // intermitentemente, colgarse cargando el iframe id.dotrino.com): así la página
+  // NUNCA queda en BLANCO mientras conecta. Al resolver, se rellena #sv-root.
   vaultShell(svt('h'), `<div class="vault-wrap"><div id="sv-root"><span class="status">${esc(svt('loading'))}</span></div>${backBtn}</div>`, svt('h'))
   wireLangReload()
   document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
   const root = document.getElementById('sv-root')
+
+  let id
+  try { id = await Identity.connect() } catch {}
+  if (!id?.me?.publickey) {
+    root.innerHTML = `<p class="status">${esc(svt('need_id'))} <a href="${viewUrl('')}" style="color:#00658c">${esc(svt('need_id_link'))}</a>.</p>`
+    return
+  }
 
   let pairBox, machinesBox
   // Eventos del daemon del iframe: { pending? running? error? }
@@ -782,16 +809,23 @@ async function selfVaultMode () {
 }
 
 async function main() {
-  const data = parseHash()
+  const data = parseRoute()
 
-  // SIEMPRE limpiar el hash de la URL: `#vault=` lleva el TOKEN de emparejamiento
-  // (un secreto de 5 min) y no debe quedar en la barra ni en el historial; los
-  // otros modos (#v=, #pubkey) ya se capturaron en `data`. replaceState no
-  // dispara 'hashchange', así que no recarga. El reingreso al emparejamiento
-  // tras cambiar de perfil NO depende del hash (usa sessionStorage 'cc-pair-intent').
   let pendingPair = false
   try { pendingPair = !!sessionStorage.getItem('cc-pair-intent') } catch (_) {}
-  if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search) } catch (_) {} }
+
+  // El `#fragment` se limpia SOLO cuando lleva el TOKEN de emparejamiento
+  // (`#vault=<token>`, secreto de ~5 min): se migra a la vista `/vault` (sin token)
+  // para que no quede en la barra ni en el historial. Los enlaces legacy de VISTA
+  // (`#myvault`, `#vault`) se reescriben a su PATH para que un refresco mantenga la
+  // vista (antes se borraba SIEMPRE y al refrescar `#myvault` caías en "Tu perfil" o
+  // la página quedaba en blanco). Los modos con DATOS (`#v=`, `#<pubkey>`) conservan
+  // su `#fragment` (privacidad). `replaceState` no dispara 'hashchange'. El reingreso
+  // al emparejamiento tras cambiar de perfil usa sessionStorage 'cc-pair-intent'.
+  try {
+    if (data.token) history.replaceState(null, '', viewUrl('vault') + location.search)
+    else if (data.legacy) history.replaceState(null, '', viewUrl(data.mode === 'selfvault' ? 'myvault' : 'vault') + location.search)
+  } catch (_) {}
 
   if (data.mode === 'vault' || pendingPair) return vaultMode(data.qr)
   if (data.mode === 'selfvault') return selfVaultMode()
@@ -840,7 +874,7 @@ async function main() {
   // PIN, exclusiva de ESTA página (no aparece en el popup de las otras apps).
   if (mode === 'self') {
     injectVaultStyles()
-    vaultShell(svt('prof_title'), `<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">${esc(svt('self_link_desc'))}</p><a href="#myvault" data-testid="goto-myvault">${esc(svt('self_link'))}</a></div></div>`, svt('tag_profiles'))
+    vaultShell(svt('prof_title'), `<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">${esc(svt('self_link_desc'))}</p><a href="${viewUrl('myvault')}" data-testid="goto-myvault">${esc(svt('self_link'))}</a></div></div>`, svt('tag_profiles'))
     wireLangReload()
     const el = makeProfile({ pubkey, name, since, mode, modal: false, manage: true })
     el.provider = provider
