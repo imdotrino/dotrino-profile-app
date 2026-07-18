@@ -436,9 +436,9 @@ async function vaultMode (prefillQr) {
 
 /* ── #myvault: ESTE dispositivo actúa como su propia bóveda (modo self) ──
    El daemon device-vault vive dentro del iframe de identidad (no requiere el
-   binario del PC ni vault.dotrino.com/pair). Aquí lo activás, generás códigos de
-   emparejamiento para enlazar agentes (ia, terminal), aprobás con SAS y
-   listás/revocás máquinas — todo por RPC al iframe vía @dotrino/identity. */
+   binario del PC). Aquí lo activas, generas códigos de emparejamiento para
+   enlazar agentes (ia, terminal), apruebas con SAS y listas/revocas máquinas —
+   todo por RPC al iframe vía @dotrino/identity. */
 let _svPresenceTimer = null
 const svEl = (h) => { const tp = document.createElement('template'); tp.innerHTML = h.trim(); return tp.content.firstElementChild }
 
