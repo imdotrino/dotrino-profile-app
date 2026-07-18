@@ -19,6 +19,7 @@ import { createVaultProfileProvider } from '@dotrino/profile'
 import '@dotrino/profile' // registra el custom element <dotrino-profile>
 import '@dotrino/topbar'  // barra superior estándar (marca+volver+idioma+perfil+support)
 import jsQR from 'jsqr' // lector de QR client-side (misma lib que dotrino-qrreader)
+import { qrSvg } from './qr.js' // generador de QR como SVG (emparejamiento self-vault)
 
 const mount = document.getElementById('app')
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -31,6 +32,10 @@ function b64urlDecode(s) {
   try {
     return decodeURIComponent(atob(s).split('').map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''))
   } catch { return atob(s) }
+}
+function b64urlEncode(str) {
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(str)))
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 /* ── verificación de firma — MISMO esquema que el vault (ECDSA P-256 + SHA-256
@@ -49,6 +54,7 @@ async function verifySig(pubkeyStr, data, sigB64) {
 function parseHash() {
   const h = location.hash.replace(/^#/, '').trim()
   if (!h) return { mode: 'self' }
+  if (h === 'myvault') return { mode: 'selfvault' }
   if (h === 'vault') return { mode: 'vault' }
   if (h.startsWith('vault=')) { try { return { mode: 'vault', qr: JSON.parse(b64urlDecode(h.slice(6))) } } catch { return { mode: 'vault' } } }
   if (h.startsWith('v=')) {
@@ -133,7 +139,26 @@ function injectVaultStyles () {
     .pin-box .btn[disabled] { opacity: .5; cursor: default; }
     .pf-nameform, .pf-confirm { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
     .pf-nameform input { flex: 1 1 auto; padding: 9px 11px; border: 1px solid #cfd8de; border-radius: 8px; font-size: 14px; }
-    .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: #b3261e; }`
+    .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: #b3261e; }
+    /* ── Self-vault (#myvault): este dispositivo ES la bóveda ── */
+    .sv-status { display: inline-block; margin: 4px 0 12px; font-size: .82rem; color: #137333; }
+    .sv-status.bad { color: #b3261e; }
+    .sv-block { margin: 14px 0; }
+    .sv-setup { background: #f4f7f9; border: 1px solid #e3e9ed; border-radius: 12px; padding: 14px; }
+    .sv-setup pre, .sv-qr-code pre { background: #0e1116; color: #7dd3fc; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: .78rem; word-break: break-all; margin: 8px 0; }
+    .sv-qr-wrap { background: #fff; padding: 10px; border-radius: 10px; display: inline-block; margin: 8px 0; border: 1px solid #e3e9ed; }
+    .sv-qr-wrap svg { width: 200px; height: 200px; display: block; }
+    .sv-pending { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #cfd8de; }
+    .sv-pair-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .sv-code-input { flex: 1 1 120px; background: #fff; color: #181c1e; border: 1px solid #cfd8de; border-radius: 10px; padding: 10px 12px; font-size: 1.1rem; letter-spacing: 2px; }
+    .sv-machine-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+    .sv-machine-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f4f7f9; border: 1px solid #e3e9ed; border-radius: 10px; padding: 10px 14px; }
+    .sv-machine-name { word-break: break-all; display: inline-flex; align-items: center; gap: 8px; }
+    .sv-mdot { width: 9px; height: 9px; border-radius: 50%; background: #cfd8de; display: inline-block; flex: none; }
+    .sv-mdot.on { background: #34a853; } .sv-mdot.off { background: #ea4335; }
+    .sv-link-row { margin-top: 14px; }
+    .sv-link-row a { color: #00658c; font-weight: 600; text-decoration: none; }
+    .sv-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; padding: 12px 14px; border: 1px solid #e3e9ed; border-radius: 12px; background: #fff; }`
   document.head.appendChild(s)
 }
 
@@ -409,6 +434,158 @@ async function vaultMode (prefillQr) {
   else if (prefillQr) doConnect(prefillQr)
 }
 
+/* ── #myvault: ESTE dispositivo actúa como su propia bóveda (modo self) ──
+   El daemon device-vault vive dentro del iframe de identidad (no requiere el
+   binario del PC ni vault.dotrino.com/pair). Aquí lo activás, generás códigos de
+   emparejamiento para enlazar agentes (ia, terminal), aprobás con SAS y
+   listás/revocás máquinas — todo por RPC al iframe vía @dotrino/identity. */
+let _svPresenceTimer = null
+const svEl = (h) => { const tp = document.createElement('template'); tp.innerHTML = h.trim(); return tp.content.firstElementChild }
+
+async function selfVaultMode () {
+  injectVaultStyles()
+
+  let id
+  try { id = await Identity.connect() } catch {}
+  if (!id?.me?.publickey) {
+    vaultShell('Mi bóveda', `<div class="vault-wrap"><p class="status">Necesitas una identidad primero. Créala en la sección <a href="/" style="color:#00658c">Tu perfil</a>.</p></div>`, 'Mi bóveda')
+    return
+  }
+
+  vaultShell('Mi bóveda', `<div class="vault-wrap"><div id="sv-root"><span class="status">Cargando…</span></div></div>`, 'Mi bóveda')
+  const root = document.getElementById('sv-root')
+
+  let pairBox, machinesBox
+  // Eventos del daemon del iframe: { pending? running? error? }
+  id.onSelfVault((p) => {
+    if (!p) return
+    if (Array.isArray(p.pending)) renderPending(p.pending)
+    if (typeof p.running === 'boolean') {
+      const badge = root.querySelector('#svStatus')
+      if (badge) badge.textContent = p.running ? 'Bóveda activa en este dispositivo' : 'Bóveda activa (daemon inactivo en esta pestaña — abrila como visible)'
+    }
+  })
+
+  async function render () {
+    if (_svPresenceTimer) { clearInterval(_svPresenceTimer); _svPresenceTimer = null }
+    let status
+    try { status = await id.selfVaultStatus() } catch { status = { enabled: false, running: false } }
+
+    if (!status.enabled) {
+      root.innerHTML = `<p class="status">Activa este dispositivo como tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre sin exponer tu llave maestra. La llave nunca sale de este navegador.</p>
+        <div class="sv-toggle-row"><span class="status">Estado: desactivado</span></div>
+        <button class="btn" id="svEnable" data-testid="sv-enable">Activar como bóveda</button>`
+      document.getElementById('svEnable').addEventListener('click', async () => { await id.setSelfVault(true); render() })
+      return
+    }
+
+    root.innerHTML = `<span class="sv-status" id="svStatus">${status.running ? 'Bóveda activa en este dispositivo' : 'Bóveda activa (daemon inactivo en esta pestaña — abrila como visible)'}</span>
+      <button class="btn ghost" id="svDisable" data-testid="sv-disable" style="margin-left:8px">Desactivar</button>
+      <div class="sv-block" id="svPair"></div>
+      <div class="sv-block" id="svMachines"><span class="status">Aún no hay máquinas enlazadas.</span></div>`
+    document.getElementById('svDisable').addEventListener('click', async () => { await id.setSelfVault(false); render() })
+
+    pairBox = document.getElementById('svPair')
+    machinesBox = document.getElementById('svMachines')
+
+    function renderPairIdle () {
+      pairBox.innerHTML = `<div class="sv-setup"><button class="btn" id="svStartPair" data-testid="sv-start-pair">Generar código de emparejamiento</button></div>`
+      document.getElementById('svStartPair').addEventListener('click', startPairing)
+    }
+    async function startPairing () {
+      let qr
+      try { ({ qr } = await id.selfVaultPairing()) } catch { return }
+      const json = JSON.stringify(qr)
+      const code = b64urlEncode(json)
+      pairBox.innerHTML = `<div class="sv-setup">
+        <p class="status">Pega este código en el agente (ia/terminal) que quieres enlazar:</p>
+        <div class="sv-qr-wrap" title="QR">${qrSvg(json)}</div>
+        <div class="sv-qr-code"><pre><code>${esc(code)}</code></pre></div>
+        <button class="btn ghost" id="svCopy">Copiar código</button>
+        <span class="status" id="svCopyMsg"></span>
+        <p class="status">El agente pedirá aprobación con un código que TIPEAS aquí.</p>
+        <p class="status">⏳ Esperando a que pida acceso…</p>
+        <button class="btn ghost" id="svCancel">Cancelar</button>
+      </div>`
+      document.getElementById('svCopy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(code); document.getElementById('svCopyMsg').textContent = 'Copiado' } catch {}
+      })
+      document.getElementById('svCancel').addEventListener('click', renderPairIdle)
+    }
+
+    function renderPending (list) {
+      if (!pairBox) return
+      if (!list || !list.length) { if (pairBox.querySelector('.sv-pending')) renderPairIdle(); return }
+      const rows = list.map((x) => `
+        <div class="sv-pending" data-device="${esc(x.deviceId)}">
+          <p class="status">La máquina ${esc(x.deviceId)} pide acceso. Tipea el código que muestra:</p>
+          <div class="sv-pair-actions">
+            <input class="sv-code-input" data-code="${esc(x.deviceId)}" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="código" aria-label="código" data-testid="sv-code" />
+            <button class="btn" data-approve="${esc(x.deviceId)}" data-testid="sv-approve">Aprobar</button>
+            <button class="btn ghost" data-reject="${esc(x.deviceId)}">Rechazar</button>
+          </div>
+        </div>`).join('')
+      pairBox.innerHTML = `<div class="sv-setup">${rows}</div>`
+      const approveWith = async (b) => {
+        const dev = b.dataset.approve
+        const input = pairBox.querySelector(`input[data-code="${CSS.escape(dev)}"]`)
+        const code = (input?.value || '').trim()
+        if (!code) { input?.focus(); return }
+        b.disabled = true
+        try { await id.selfVaultApprove(dev, code); refreshMachines() } catch { b.disabled = false }
+      }
+      pairBox.querySelectorAll('[data-approve]').forEach((b) => {
+        b.addEventListener('click', () => approveWith(b))
+        const input = pairBox.querySelector(`input[data-code="${CSS.escape(b.dataset.approve)}"]`)
+        input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') approveWith(b) })
+      })
+      pairBox.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => id.selfVaultReject(b.dataset.reject)))
+    }
+
+    try { renderPending(await id.selfVaultPending()) } catch {}
+    renderPairIdle()
+
+    async function updatePresence (subs) {
+      if (!subs.length) return
+      let online = new Set()
+      try { const r = await id.selfVaultProbe(subs); online = new Set(r.online || []) } catch {}
+      for (const row of machinesBox.querySelectorAll('.sv-machine-row')) {
+        const dot = row.querySelector('.sv-mdot'); if (!dot) continue
+        const on = online.has(row.dataset.sub)
+        dot.className = 'sv-mdot ' + (on ? 'on' : 'off')
+        dot.title = on ? 'en línea' : 'desconectado'
+      }
+    }
+    async function refreshMachines () {
+      try {
+        const list = await id.selfVaultMachines()
+        if (!list.length) {
+          machinesBox.innerHTML = `<span class="status">Aún no hay máquinas enlazadas.</span>`
+          return
+        }
+        machinesBox.innerHTML = `<b>Máquinas enlazadas</b><div class="sv-machine-list"></div>`
+        const holder = machinesBox.querySelector('.sv-machine-list')
+        for (const d of list) {
+          const name = d.label ? `${d.label} · ${d.deviceId}` : d.deviceId
+          holder.appendChild(svEl(`<div class="sv-machine-row" data-sub="${esc(d.sub)}">
+            <span class="sv-machine-name"><span class="sv-mdot" title="comprobando…"></span>🖥 ${esc(name)}</span>
+            <button class="btn ghost" data-revoke="${esc(d.nonce)}">Revocar</button>
+          </div>`))
+        }
+        machinesBox.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => { await id.selfVaultRevoke(b.dataset.revoke); refreshMachines() }))
+        updatePresence(list.map((d) => d.sub))
+      } catch { machinesBox.innerHTML = `<span class="status">Aún no hay máquinas enlazadas.</span>` }
+    }
+    refreshMachines()
+    _svPresenceTimer = setInterval(() => {
+      const subs = [...machinesBox.querySelectorAll('.sv-machine-row')].map((r) => r.dataset.sub)
+      if (subs.length) updatePresence(subs)
+    }, 30000)
+  }
+
+  render()
+}
+
 async function main() {
   const data = parseHash()
 
@@ -422,6 +599,7 @@ async function main() {
   if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search) } catch (_) {} }
 
   if (data.mode === 'vault' || pendingPair) return vaultMode(data.qr)
+  if (data.mode === 'selfvault') return selfVaultMode()
 
   // ── VALIDAR: firma del contenido + reputación del remitente, en un paso ──
   if (data.mode === 'validate') {
@@ -467,7 +645,7 @@ async function main() {
   // PIN, exclusiva de ESTA página (no aparece en el popup de las otras apps).
   if (mode === 'self') {
     injectVaultStyles()
-    vaultShell('Tu perfil', '<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div></div>', 'Perfiles')
+    vaultShell('Tu perfil', '<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">Convierte este dispositivo en tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre.</p><a href="#myvault" data-testid="goto-myvault">Mi bóveda →</a></div></div>', 'Perfiles')
     const el = makeProfile({ pubkey, name, since, mode, modal: false, manage: true })
     el.provider = provider
     document.getElementById('self-prof')?.appendChild(el)
