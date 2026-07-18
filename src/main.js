@@ -444,15 +444,24 @@ const svEl = (h) => { const tp = document.createElement('template'); tp.innerHTM
 
 async function selfVaultMode () {
   injectVaultStyles()
+  // ?back= la app que nos llamó (sólo http/https, para evitar open-redirect)
+  let backHref = null, backHost = null
+  try {
+    const b = new URLSearchParams(location.search).get('back')
+    if (b) { const u = new URL(b); if (u.protocol === 'http:' || u.protocol === 'https:') { backHref = u.origin + u.pathname; backHost = u.hostname } }
+  } catch {}
+  const backBtn = backHost ? `<p style="margin-top:14px"><button class="btn ghost" id="svBack" data-testid="sv-back">← Volver a ${esc(backHost)}</button></p>` : ''
 
   let id
   try { id = await Identity.connect() } catch {}
   if (!id?.me?.publickey) {
-    vaultShell('Mi bóveda', `<div class="vault-wrap"><p class="status">Necesitas una identidad primero. Créala en la sección <a href="/" style="color:#00658c">Tu perfil</a>.</p></div>`, 'Mi bóveda')
+    vaultShell('Mi bóveda', `<div class="vault-wrap"><p class="status">Necesitas una identidad primero. Créala en la sección <a href="/" style="color:#00658c">Tu perfil</a>.</p>${backBtn}</div>`, 'Mi bóveda')
+    document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
     return
   }
 
-  vaultShell('Mi bóveda', `<div class="vault-wrap"><div id="sv-root"><span class="status">Cargando…</span></div></div>`, 'Mi bóveda')
+  vaultShell('Mi bóveda', `<div class="vault-wrap"><div id="sv-root"><span class="status">Cargando…</span></div>${backBtn}</div>`, 'Mi bóveda')
+  document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
   const root = document.getElementById('sv-root')
 
   let pairBox, machinesBox
