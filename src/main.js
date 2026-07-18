@@ -33,6 +33,12 @@ function b64urlDecode(s) {
     return decodeURIComponent(atob(s).split('').map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''))
   } catch { return atob(s) }
 }
+// base64url del JSON: para el CÓDIGO COPIABLE (oculta iss/token/sn en texto plano,
+// más corto). El QR usa el JSON crudo. El agente (CLI) acepta ambos formatos.
+function b64urlEncode(str) {
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(str)))
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
 
 /* ── verificación de firma — MISMO esquema que el vault (ECDSA P-256 + SHA-256
    sobre canonicalStringify, firma = base64 de r||s crudos). Solo clave pública. */
@@ -556,13 +562,13 @@ async function selfVaultMode () {
     async function startPairing () {
       let qr
       try { ({ qr } = await id.selfVaultPairing()) } catch { return }
-      // El código copiable va en JSON crudo — el MISMO formato que imprime
-      // `dotrino-vault pair` en el PC y que el QR, para que el CLI (@dotrino/terminal-agent,
-      // @dotrino/ia-agent) lo acepte con JSON.parse directo.
-      const code = JSON.stringify(qr)
+      // El QR usa el JSON crudo (más corto → QR más chico); el código COPIABLE va en
+      // base64url (oculta iss/token/sn en texto plano). El agente (CLI) acepta ambos.
+      const json = JSON.stringify(qr)
+      const code = b64urlEncode(json)
       pairBox.innerHTML = `<div class="sv-setup">
         <p class="status">${esc(svt('pair_step1'))}</p>
-        <div class="sv-qr-wrap" title="QR">${qrSvg(code)}</div>
+        <div class="sv-qr-wrap" title="QR">${qrSvg(json)}</div>
         <div class="sv-qr-code"><pre><code>${esc(code)}</code></pre></div>
         <button class="btn ghost" id="svCopy">${esc(svt('copy'))}</button>
         <span class="status" id="svCopyMsg"></span>
