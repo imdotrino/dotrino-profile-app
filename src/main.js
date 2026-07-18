@@ -33,10 +33,6 @@ function b64urlDecode(s) {
     return decodeURIComponent(atob(s).split('').map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''))
   } catch { return atob(s) }
 }
-function b64urlEncode(str) {
-  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(str)))
-  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
 
 /* ── verificación de firma — MISMO esquema que el vault (ECDSA P-256 + SHA-256
    sobre canonicalStringify, firma = base64 de r||s crudos). Solo clave pública. */
@@ -442,6 +438,60 @@ async function vaultMode (prefillQr) {
 let _svPresenceTimer = null
 const svEl = (h) => { const tp = document.createElement('template'); tp.innerHTML = h.trim(); return tp.content.firstElementChild }
 
+// i18n de la vista #myvault. El toggle del topbar emite 'dotrino-lang'; al cambiar,
+// persistimos y recargamos para servir toda la página en el idioma elegido.
+let svLang = (() => { try { const s = localStorage.getItem('dotrino-lang'); if (s === 'en' || s === 'es') return s } catch {} return (document.documentElement.lang === 'en') ? 'en' : 'es' })()
+const SV_I18N = {
+  es: {
+    h: 'Mi bóveda', loading: 'Cargando…',
+    need_id: 'Necesitas una identidad primero. Créala en la sección', need_id_link: 'Tu perfil',
+    back: (h) => `← Volver a ${h}`,
+    intro_off: 'Activa este dispositivo como tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre sin exponer tu llave maestra. La llave nunca sale de este navegador.',
+    state_off: 'Estado: desactivado', enable: 'Activar como bóveda',
+    running: 'Bóveda activa en este dispositivo', not_running: 'Bóveda activa (daemon inactivo en esta pestaña — ábrela como visible)',
+    disable: 'Desactivar', pair_new: 'Generar código de emparejamiento',
+    pair_step1: 'Pega este código en el agente (ia/terminal) que quieres enlazar:',
+    pair_step2: 'El agente pedirá aprobación con un código que TIPEAS aquí.',
+    pair_wait: '⏳ Esperando a que pida acceso…', copy: 'Copiar código', copied: 'Copiado', cancel: 'Cancelar',
+    pending: (d) => `La máquina ${d} pide acceso. Tipea el código que muestra:`,
+    code_ph: 'código', approve: 'Aprobar', reject: 'Rechazar',
+    machines_title: 'Máquinas enlazadas', machines_none: 'Aún no hay máquinas enlazadas.',
+    checking: 'comprobando…', online: 'en línea', offline: 'desconectado', revoke: 'Revocar',
+    self_link_desc: 'Convierte este dispositivo en tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre.',
+    self_link: 'Mi bóveda →'
+  },
+  en: {
+    h: 'My vault', loading: 'Loading…',
+    need_id: 'You need an identity first. Create one at', need_id_link: 'Your profile',
+    back: (h) => `← Back to ${h}`,
+    intro_off: 'Enable this device as your vault to link agents (ia, terminal) that sign on your behalf without exposing your master key. The key never leaves this browser.',
+    state_off: 'Status: off', enable: 'Enable as vault',
+    running: 'Vault active on this device', not_running: 'Vault active (daemon inactive in this tab — open it as visible)',
+    disable: 'Disable', pair_new: 'Generate pairing code',
+    pair_step1: 'Paste this code in the agent (ia/terminal) you want to link:',
+    pair_step2: 'The agent will ask for approval with a code you TYPE here.',
+    pair_wait: '⏳ Waiting for it to request access…', copy: 'Copy code', copied: 'Copied', cancel: 'Cancel',
+    pending: (d) => `Machine ${d} requests access. Type the code it shows:`,
+    code_ph: 'code', approve: 'Approve', reject: 'Reject',
+    machines_title: 'Linked machines', machines_none: 'No machines linked yet.',
+    checking: 'checking…', online: 'online', offline: 'offline', revoke: 'Revoke',
+    self_link_desc: 'Turn this device into your vault to link agents (ia, terminal) that sign on your behalf.',
+    self_link: 'My vault →'
+  }
+}
+function svt (k, ...a) { const v = SV_I18N[svLang]?.[k]; return String(typeof v === 'function' ? v(...a) : (v ?? k)) }
+// Conecta el toggle de idioma del <dotrino-topbar>: persiste y recarga para servir todo en el idioma elegido.
+function wireLangReload () {
+  const tb = mount.querySelector('dotrino-topbar'); if (!tb) return
+  tb.setAttribute('lang', svLang)
+  tb.addEventListener('dotrino-lang', (e) => {
+    const l = e.detail?.lang === 'en' ? 'en' : 'es'
+    try { localStorage.setItem('dotrino-lang', l) } catch {}
+    document.documentElement.lang = l
+    window.location.reload()
+  })
+}
+
 async function selfVaultMode () {
   injectVaultStyles()
   // ?back= la app que nos llamó (sólo http/https, para evitar open-redirect)
@@ -450,17 +500,19 @@ async function selfVaultMode () {
     const b = new URLSearchParams(location.search).get('back')
     if (b) { const u = new URL(b); if (u.protocol === 'http:' || u.protocol === 'https:') { backHref = u.origin + u.pathname; backHost = u.hostname } }
   } catch {}
-  const backBtn = backHost ? `<p style="margin-top:14px"><button class="btn ghost" id="svBack" data-testid="sv-back">← Volver a ${esc(backHost)}</button></p>` : ''
+  const backBtn = backHost ? `<p style="margin-top:14px"><button class="btn ghost" id="svBack" data-testid="sv-back">${esc(svt('back', backHost))}</button></p>` : ''
 
   let id
   try { id = await Identity.connect() } catch {}
   if (!id?.me?.publickey) {
-    vaultShell('Mi bóveda', `<div class="vault-wrap"><p class="status">Necesitas una identidad primero. Créala en la sección <a href="/" style="color:#00658c">Tu perfil</a>.</p>${backBtn}</div>`, 'Mi bóveda')
+    vaultShell(svt('h'), `<div class="vault-wrap"><p class="status">${esc(svt('need_id'))} <a href="/" style="color:#00658c">${esc(svt('need_id_link'))}</a>.</p>${backBtn}</div>`, svt('h'))
+    wireLangReload()
     document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
     return
   }
 
-  vaultShell('Mi bóveda', `<div class="vault-wrap"><div id="sv-root"><span class="status">Cargando…</span></div>${backBtn}</div>`, 'Mi bóveda')
+  vaultShell(svt('h'), `<div class="vault-wrap"><div id="sv-root"><span class="status">${esc(svt('loading'))}</span></div>${backBtn}</div>`, svt('h'))
+  wireLangReload()
   document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
   const root = document.getElementById('sv-root')
 
@@ -471,7 +523,7 @@ async function selfVaultMode () {
     if (Array.isArray(p.pending)) renderPending(p.pending)
     if (typeof p.running === 'boolean') {
       const badge = root.querySelector('#svStatus')
-      if (badge) badge.textContent = p.running ? 'Bóveda activa en este dispositivo' : 'Bóveda activa (daemon inactivo en esta pestaña — abrila como visible)'
+      if (badge) badge.textContent = p.running ? svt('running') : svt('not_running')
     }
   })
 
@@ -481,43 +533,45 @@ async function selfVaultMode () {
     try { status = await id.selfVaultStatus() } catch { status = { enabled: false, running: false } }
 
     if (!status.enabled) {
-      root.innerHTML = `<p class="status">Activa este dispositivo como tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre sin exponer tu llave maestra. La llave nunca sale de este navegador.</p>
-        <div class="sv-toggle-row"><span class="status">Estado: desactivado</span></div>
-        <button class="btn" id="svEnable" data-testid="sv-enable">Activar como bóveda</button>`
+      root.innerHTML = `<p class="status">${esc(svt('intro_off'))}</p>
+        <div class="sv-toggle-row"><span class="status">${esc(svt('state_off'))}</span></div>
+        <button class="btn" id="svEnable" data-testid="sv-enable">${esc(svt('enable'))}</button>`
       document.getElementById('svEnable').addEventListener('click', async () => { await id.setSelfVault(true); render() })
       return
     }
 
-    root.innerHTML = `<span class="sv-status" id="svStatus">${status.running ? 'Bóveda activa en este dispositivo' : 'Bóveda activa (daemon inactivo en esta pestaña — abrila como visible)'}</span>
-      <button class="btn ghost" id="svDisable" data-testid="sv-disable" style="margin-left:8px">Desactivar</button>
+    root.innerHTML = `<span class="sv-status" id="svStatus">${esc(status.running ? svt('running') : svt('not_running'))}</span>
+      <button class="btn ghost" id="svDisable" data-testid="sv-disable" style="margin-left:8px">${esc(svt('disable'))}</button>
       <div class="sv-block" id="svPair"></div>
-      <div class="sv-block" id="svMachines"><span class="status">Aún no hay máquinas enlazadas.</span></div>`
+      <div class="sv-block" id="svMachines"><span class="status">${esc(svt('machines_none'))}</span></div>`
     document.getElementById('svDisable').addEventListener('click', async () => { await id.setSelfVault(false); render() })
 
     pairBox = document.getElementById('svPair')
     machinesBox = document.getElementById('svMachines')
 
     function renderPairIdle () {
-      pairBox.innerHTML = `<div class="sv-setup"><button class="btn" id="svStartPair" data-testid="sv-start-pair">Generar código de emparejamiento</button></div>`
+      pairBox.innerHTML = `<div class="sv-setup"><button class="btn" id="svStartPair" data-testid="sv-start-pair">${esc(svt('pair_new'))}</button></div>`
       document.getElementById('svStartPair').addEventListener('click', startPairing)
     }
     async function startPairing () {
       let qr
       try { ({ qr } = await id.selfVaultPairing()) } catch { return }
-      const json = JSON.stringify(qr)
-      const code = b64urlEncode(json)
+      // El código copiable va en JSON crudo — el MISMO formato que imprime
+      // `dotrino-vault pair` en el PC y que el QR, para que el CLI (@dotrino/terminal-agent,
+      // @dotrino/ia-agent) lo acepte con JSON.parse directo.
+      const code = JSON.stringify(qr)
       pairBox.innerHTML = `<div class="sv-setup">
-        <p class="status">Pega este código en el agente (ia/terminal) que quieres enlazar:</p>
-        <div class="sv-qr-wrap" title="QR">${qrSvg(json)}</div>
+        <p class="status">${esc(svt('pair_step1'))}</p>
+        <div class="sv-qr-wrap" title="QR">${qrSvg(code)}</div>
         <div class="sv-qr-code"><pre><code>${esc(code)}</code></pre></div>
-        <button class="btn ghost" id="svCopy">Copiar código</button>
+        <button class="btn ghost" id="svCopy">${esc(svt('copy'))}</button>
         <span class="status" id="svCopyMsg"></span>
-        <p class="status">El agente pedirá aprobación con un código que TIPEAS aquí.</p>
-        <p class="status">⏳ Esperando a que pida acceso…</p>
-        <button class="btn ghost" id="svCancel">Cancelar</button>
+        <p class="status">${esc(svt('pair_step2'))}</p>
+        <p class="status">${esc(svt('pair_wait'))}</p>
+        <button class="btn ghost" id="svCancel">${esc(svt('cancel'))}</button>
       </div>`
       document.getElementById('svCopy').addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(code); document.getElementById('svCopyMsg').textContent = 'Copiado' } catch {}
+        try { await navigator.clipboard.writeText(code); document.getElementById('svCopyMsg').textContent = svt('copied') } catch {}
       })
       document.getElementById('svCancel').addEventListener('click', renderPairIdle)
     }
@@ -527,11 +581,11 @@ async function selfVaultMode () {
       if (!list || !list.length) { if (pairBox.querySelector('.sv-pending')) renderPairIdle(); return }
       const rows = list.map((x) => `
         <div class="sv-pending" data-device="${esc(x.deviceId)}">
-          <p class="status">La máquina ${esc(x.deviceId)} pide acceso. Tipea el código que muestra:</p>
+          <p class="status">${esc(svt('pending', x.deviceId))}</p>
           <div class="sv-pair-actions">
-            <input class="sv-code-input" data-code="${esc(x.deviceId)}" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="código" aria-label="código" data-testid="sv-code" />
-            <button class="btn" data-approve="${esc(x.deviceId)}" data-testid="sv-approve">Aprobar</button>
-            <button class="btn ghost" data-reject="${esc(x.deviceId)}">Rechazar</button>
+            <input class="sv-code-input" data-code="${esc(x.deviceId)}" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="${esc(svt('code_ph'))}" aria-label="${esc(svt('code_ph'))}" data-testid="sv-code" />
+            <button class="btn" data-approve="${esc(x.deviceId)}" data-testid="sv-approve">${esc(svt('approve'))}</button>
+            <button class="btn ghost" data-reject="${esc(x.deviceId)}">${esc(svt('reject'))}</button>
           </div>
         </div>`).join('')
       pairBox.innerHTML = `<div class="sv-setup">${rows}</div>`
@@ -562,28 +616,28 @@ async function selfVaultMode () {
         const dot = row.querySelector('.sv-mdot'); if (!dot) continue
         const on = online.has(row.dataset.sub)
         dot.className = 'sv-mdot ' + (on ? 'on' : 'off')
-        dot.title = on ? 'en línea' : 'desconectado'
+        dot.title = on ? svt('online') : svt('offline')
       }
     }
     async function refreshMachines () {
       try {
         const list = await id.selfVaultMachines()
         if (!list.length) {
-          machinesBox.innerHTML = `<span class="status">Aún no hay máquinas enlazadas.</span>`
+          machinesBox.innerHTML = `<span class="status">${esc(svt('machines_none'))}</span>`
           return
         }
-        machinesBox.innerHTML = `<b>Máquinas enlazadas</b><div class="sv-machine-list"></div>`
+        machinesBox.innerHTML = `<b>${esc(svt('machines_title'))}</b><div class="sv-machine-list"></div>`
         const holder = machinesBox.querySelector('.sv-machine-list')
         for (const d of list) {
           const name = d.label ? `${d.label} · ${d.deviceId}` : d.deviceId
           holder.appendChild(svEl(`<div class="sv-machine-row" data-sub="${esc(d.sub)}">
-            <span class="sv-machine-name"><span class="sv-mdot" title="comprobando…"></span>🖥 ${esc(name)}</span>
-            <button class="btn ghost" data-revoke="${esc(d.nonce)}">Revocar</button>
+            <span class="sv-machine-name"><span class="sv-mdot" title="${esc(svt('checking'))}"></span>🖥 ${esc(name)}</span>
+            <button class="btn ghost" data-revoke="${esc(d.nonce)}">${esc(svt('revoke'))}</button>
           </div>`))
         }
         machinesBox.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => { await id.selfVaultRevoke(b.dataset.revoke); refreshMachines() }))
         updatePresence(list.map((d) => d.sub))
-      } catch { machinesBox.innerHTML = `<span class="status">Aún no hay máquinas enlazadas.</span>` }
+      } catch { machinesBox.innerHTML = `<span class="status">${esc(svt('machines_none'))}</span>` }
     }
     refreshMachines()
     _svPresenceTimer = setInterval(() => {
@@ -654,7 +708,8 @@ async function main() {
   // PIN, exclusiva de ESTA página (no aparece en el popup de las otras apps).
   if (mode === 'self') {
     injectVaultStyles()
-    vaultShell('Tu perfil', '<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">Convierte este dispositivo en tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre.</p><a href="#myvault" data-testid="goto-myvault">Mi bóveda →</a></div></div>', 'Perfiles')
+    vaultShell('Tu perfil', `<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">${esc(svt('self_link_desc'))}</p><a href="#myvault" data-testid="goto-myvault">${esc(svt('self_link'))}</a></div></div>`, 'Perfiles')
+    wireLangReload()
     const el = makeProfile({ pubkey, name, since, mode, modal: false, manage: true })
     el.provider = provider
     document.getElementById('self-prof')?.appendChild(el)
