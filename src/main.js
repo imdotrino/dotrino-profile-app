@@ -201,7 +201,7 @@ function scanWithCamera (host) {
   return new Promise((resolve) => {
     let stream = null, raf = null, done = false
     const stop = (val) => { if (done) return; done = true; if (raf) cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t => t.stop()); host.innerHTML = ''; resolve(val) }
-    host.innerHTML = '<div class="scanbox"><video playsinline muted></video><div><button id="scancancel" class="btn ghost">Cancelar</button></div></div>'
+    host.innerHTML = `<div class="scanbox"><video playsinline muted></video><div><button id="scancancel" class="btn ghost">${esc(svt('cancel'))}</button></div></div>`
     const video = host.querySelector('video')
     host.querySelector('#scancancel').onclick = () => stop(null)
     const c = document.createElement('canvas'); const ctx = c.getContext('2d')
@@ -216,11 +216,11 @@ function scanWithCamera (host) {
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then((s) => { stream = s; video.srcObject = s; return video.play().catch(() => {}) })
       .then(() => { raf = requestAnimationFrame(tick) })
-      .catch(() => { host.innerHTML = '<div class="banner bad">No se pudo abrir la cámara. Probá «Abrir imagen/archivo» o pegá el código.</div>'; resolve(null) })
+      .catch(() => { host.innerHTML = `<div class="banner bad">${esc(svt('cam_err'))}</div>`; resolve(null) })
   })
 }
 
-function vaultShell (title, inner, tag = 'Tu identidad') {
+function vaultShell (title, inner, tag = svt('tag_identity')) {
   mount.innerHTML = `<div class="vault-page">
     <dotrino-topbar class="vault-topbar" brand-href="https://dotrino.com/"
       support-repo="imdotrino/dotrino_profile" support-discord="https://discord.gg/D648uq7cth" profile>
@@ -262,16 +262,16 @@ async function renderPinSection (host) {
   host.innerHTML = `
     <div class="pin-box">
       <div class="pin-row">
-        <span class="pin-title">🔒 Protección con PIN</span>
-        <button class="btn ghost" id="pin-toggle">${lock.protected ? 'Quitar el PIN' : 'Proteger con PIN'}</button>
+        <span class="pin-title">${svt('pin_title')}</span>
+        <button class="btn ghost" id="pin-toggle">${lock.protected ? svt('pin_remove') : svt('pin_protect')}</button>
       </div>
-      <p class="muted" style="font-size:12.5px;margin:6px 0 0">Protege el perfil activo <strong>solo en este dispositivo</strong> (no se comparte ni se sincroniza). Se pide una vez por pestaña; refrescar no lo vuelve a pedir.</p>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 0">${svt('pin_desc')}</p>
       <div id="pf-form"></div>
     </div>`
   host.querySelector('#pin-toggle').onclick = () => {
     if (lock.protected) {
       confirmDelete(host, null, async () => { await id.removeProfilePassword(); location.reload() },
-        '¿Quitar el PIN de este perfil en este dispositivo?', 'Quitar el PIN')
+        svt('pin_remove_q'), svt('pin_remove'))
     } else {
       pinForm(host, async (pin) => { await id.setProfilePassword(pin); location.reload() })
     }
@@ -282,16 +282,16 @@ async function renderPinSection (host) {
 function pinForm (overlay, onSubmit) {
   const host = overlay.querySelector('#pf-form')
   host.innerHTML = `<div class="pf-nameform" style="flex-wrap:wrap">
-    <input id="pf-pin1" type="password" inputmode="numeric" maxlength="64" placeholder="PIN (mín. 4)" />
-    <input id="pf-pin2" type="password" inputmode="numeric" maxlength="64" placeholder="Repite el PIN" />
-    <button class="btn" id="pf-pingo">Proteger</button>
+    <input id="pf-pin1" type="password" inputmode="numeric" maxlength="64" placeholder="${esc(svt('pin_ph1'))}" />
+    <input id="pf-pin2" type="password" inputmode="numeric" maxlength="64" placeholder="${esc(svt('pin_ph2'))}" />
+    <button class="btn" id="pf-pingo">${svt('pin_go')}</button>
     <span class="muted" id="pf-pinerr" style="flex-basis:100%"></span></div>`
   const p1 = host.querySelector('#pf-pin1'); const p2 = host.querySelector('#pf-pin2')
   const err = host.querySelector('#pf-pinerr'); p1.focus()
   const go = async () => {
     err.textContent = ''
-    if (p1.value.length < 4) { err.textContent = 'Mínimo 4 caracteres.'; return }
-    if (p1.value !== p2.value) { err.textContent = 'No coinciden.'; return }
+    if (p1.value.length < 4) { err.textContent = svt('pin_min'); return }
+    if (p1.value !== p2.value) { err.textContent = svt('pin_mismatch'); return }
     host.querySelector('#pf-pingo').disabled = true
     try { await onSubmit(p1.value) } catch (e) { err.textContent = e.message; host.querySelector('#pf-pingo').disabled = false }
   }
@@ -300,9 +300,9 @@ function pinForm (overlay, onSubmit) {
 }
 
 // Confirmación inline de borrado (sin confirm() del navegador).
-function confirmDelete (overlay, btn, onYes, msg = '¿Borrar este perfil y todos sus datos? No se puede deshacer.', yes = 'Borrar') {
+function confirmDelete (overlay, btn, onYes, msg = svt('del_msg'), yes = svt('del_yes')) {
   const host = overlay.querySelector('#pf-form')
-  host.innerHTML = `<div class="pf-confirm"><span>${esc(msg)}</span><button class="btn danger" id="pf-yes">${esc(yes)}</button><button class="btn ghost" id="pf-no">Cancelar</button></div>`
+  host.innerHTML = `<div class="pf-confirm"><span>${esc(msg)}</span><button class="btn danger" id="pf-yes">${esc(yes)}</button><button class="btn ghost" id="pf-no">${esc(svt('cancel'))}</button></div>`
   host.querySelector('#pf-no').onclick = () => { host.innerHTML = '' }
   host.querySelector('#pf-yes').onclick = async () => { host.querySelector('#pf-yes').disabled = true; await onYes() }
 }
@@ -311,7 +311,7 @@ async function vaultMode (prefillQr) {
   injectVaultStyles()
   let id
   try { id = await Identity.connect() } catch {
-    showState('Tu bóveda', '<p>No se pudo conectar tu identidad. Recarga e inténtalo de nuevo.</p>'); return
+    showState(svt('v_title'), `<p>${svt('v_connect_err')}</p>`); return
   }
   // Si venimos de elegir/crear un perfil para esta bóveda (se cambió de perfil y la página
   // recargó), retomamos el emparejamiento con el perfil ya activo, sin volver a preguntar.
@@ -324,70 +324,70 @@ async function vaultMode (prefillQr) {
 
   if (status.paired && !expired) {
     const fp = await vaultFingerprint(status.master)
-    vaultShell('Tu bóveda', `<div class="vault-wrap">
-      <div class="banner ok">✓ Este dispositivo está conectado a tu bóveda.</div>
+    vaultShell(svt('v_title'), `<div class="vault-wrap">
+      <div class="banner ok">${svt('v_connected_ok')}</div>
       <ul class="vault-info">
-        <li>Dispositivo: <code>${esc(status.deviceId)}</code></li>
-        <li>Bóveda (huella): <code>${esc(fp)}</code></li>
-        <li>Permisos: <code>${esc((status.scope || []).join(', '))}</code></li>
-        ${status.exp ? `<li>Conexión válida hasta: <code>${esc(new Date(status.exp).toLocaleString())}</code></li>` : ''}
+        <li>${svt('v_device')}: <code>${esc(status.deviceId)}</code></li>
+        <li>${svt('v_vault_fp')}: <code>${esc(fp)}</code></li>
+        <li>${svt('v_scope')}: <code>${esc((status.scope || []).join(', '))}</code></li>
+        ${status.exp ? `<li>${svt('v_valid_until')}: <code>${esc(new Date(status.exp).toLocaleString())}</code></li>` : ''}
       </ul>
-      <h2 style="font-size:16px;margin:18px 0 6px">Tus dispositivos</h2>
-      <div id="devlist" class="muted">Cargando…</div>
+      <h2 style="font-size:16px;margin:18px 0 6px">${svt('v_your_devices')}</h2>
+      <div id="devlist" class="muted">${svt('loading')}</div>
     </div>`)
+    wireLangReload()
     // Lista (solo lectura) de dispositivos enrolados; desconectar/revocar es desde el PC.
     id.listVaultDevices().then(({ devices }) => {
       const box = document.getElementById('devlist'); if (!box) return
       if (!devices?.length) { box.textContent = '—'; return }
       box.innerHTML = '<ul class="vault-info">' + devices.map((d) => {
-        const me = d.deviceId === status.deviceId ? ' <strong>(este)</strong>' : ''
-        const exp = d.exp ? ' · expira ' + new Date(d.exp).toLocaleDateString() : ''
+        const me = d.deviceId === status.deviceId ? ` <strong>${svt('v_this')}</strong>` : ''
+        const exp = d.exp ? ' · ' + svt('v_expires') + ' ' + new Date(d.exp).toLocaleDateString() : ''
         return `<li>· <code>${esc(d.deviceId || '????')}</code>${me} ${esc(d.label || '')}<span class="muted">${esc(exp)}</span></li>`
       }).join('') + '</ul>'
     }).catch((e) => {
       const box = document.getElementById('devlist'); if (!box) return
       // Distinguir "no autorizado" (cert rechazado/revocado) de "vault apagado".
       box.textContent = /no autorizado/i.test(e?.message || '')
-        ? 'El vault rechazó este dispositivo (' + e.message + '). Vuelve a conectarlo con `dotrino-vault pair`.'
-        : 'No se pudo cargar (¿el vault está encendido?).'
+        ? svt('v_dev_rejected', e.message)
+        : svt('v_dev_load_err')
     })
     return
   }
 
-  vaultShell('Conectar a tu bóveda', `<div class="vault-wrap">
-    ${expired ? '<div class="banner bad">Tu conexión con la bóveda <strong>venció</strong> (' + esc(new Date(status.exp).toLocaleDateString()) + '). Vuelve a conectar este dispositivo.</div>' : ''}
-    <p>Conecta este navegador a tu <strong>bóveda</strong> (el programa <code>dotrino-vault</code> en tu PC),
-       para que tu información viva en tu propio servidor. En tu PC ejecuta <code>dotrino-vault pair</code> y
-       <strong>escaneá el QR</strong>, abrí su imagen/archivo, o pegá el código:</p>
+  vaultShell(svt('v_connect_title'), `<div class="vault-wrap">
+    ${expired ? `<div class="banner bad">${svt('v_expired', esc(new Date(status.exp).toLocaleDateString()))}</div>` : ''}
+    <p>${svt('v_intro')}</p>
     <div class="scanrow">
-      <button id="scan" class="btn">📷 Escanear QR</button>
-      <button id="openfile" class="btn ghost">📁 Abrir imagen/archivo</button>
+      <button id="scan" class="btn">${svt('v_scan')}</button>
+      <button id="openfile" class="btn ghost">${svt('v_openfile')}</button>
     </div>
     <input id="fileinput" type="file" accept="image/*,.dpair,.json,text/plain" style="display:none">
     <div id="scanarea"></div>
-    <details><summary>…o pegar el código a mano</summary>
+    <details><summary>${svt('v_paste_toggle')}</summary>
       <textarea id="qr" rows="3" placeholder='{"v":2,"iss":"…","proxy":"…","token":"…","sn":"…"}'></textarea>
-      <div><button id="connect" class="btn ghost">Conectar con el código pegado</button></div>
+      <div><button id="connect" class="btn ghost">${svt('v_connect_pasted')}</button></div>
     </details>
     <div id="vmsg"></div>
   </div>`)
+  wireLangReload()
 
   const msg = () => document.getElementById('vmsg')
   async function doConnect (qr, skip) {
-    if (!qr || !qr.iss || !qr.token) { msg().innerHTML = '<div class="banner bad">No reconocí un código de emparejamiento válido. Volvé a generar el QR con <code>dotrino-vault pair</code>.</div>'; return }
-    if (!qr.sn || (qr.v && qr.v < 2)) { msg().innerHTML = '<div class="banner bad">Este código es de una <strong>versión vieja</strong> del vault. Actualizá a la última y reiniciá el servicio (<code>systemctl --user restart dotrino-vault</code>), confirmá con <code>dotrino-vault status</code>, y generá un código nuevo con <code>dotrino-vault pair</code>.</div>'; return }
+    if (!qr || !qr.iss || !qr.token) { msg().innerHTML = `<div class="banner bad">${svt('v_bad_code')}</div>`; return }
+    if (!qr.sn || (qr.v && qr.v < 2)) { msg().innerHTML = `<div class="banner bad">${svt('v_old_code')}</div>`; return }
     // Elegir CON QUÉ PERFIL conectar esta bóveda (o uno nuevo) ANTES de emparejar.
     if (!skip) {
       const profiles = await id.listProfiles().catch(() => [])
       const cur = profiles.find((p) => p.current) || profiles[0]
       msg().innerHTML = `<div class="sas-box" style="text-align:left">
-        <p><strong>¿Con qué perfil quieres conectar esta bóveda?</strong></p>
-        <p class="muted">Cada perfil tiene su propia bóveda. Elige uno existente o conecta uno nuevo.</p>
+        <p><strong>${svt('v_pick_profile_q')}</strong></p>
+        <p class="muted">${svt('v_pick_profile_d')}</p>
         <div class="pf-pick" style="display:flex;flex-direction:column;gap:8px;margin:10px 0"></div>
-        <button class="btn ghost" id="pick-new">+ Conectar un perfil nuevo</button>
+        <button class="btn ghost" id="pick-new">${svt('v_pick_new')}</button>
       </div>`
       const host = msg().querySelector('.pf-pick')
-      host.innerHTML = profiles.map((p) => `<button class="btn ${p.current ? '' : 'ghost'} pick-prof" data-id="${esc(p.id)}">${esc(p.name || 'Perfil sin nombre')}${p.current ? ' · activo' : ''}</button>`).join('')
+      host.innerHTML = profiles.map((p) => `<button class="btn ${p.current ? '' : 'ghost'} pick-prof" data-id="${esc(p.id)}">${esc(p.name || svt('v_profile_noname'))}${p.current ? svt('v_profile_active') : ''}</button>`).join('')
       host.querySelectorAll('.pick-prof').forEach((b) => { b.onclick = async () => {
         const pid = b.dataset.id
         if (cur && pid === cur.id) { doConnect(qr, true) } // ya activo → emparejar directo
@@ -396,27 +396,27 @@ async function vaultMode (prefillQr) {
       msg().querySelector('#pick-new').onclick = async () => { sessionStorage.setItem('cc-pair-intent', JSON.stringify(qr)); await id.createProfile(''); location.reload() }
       return
     }
-    msg().innerHTML = '<div class="banner">Conectando…</div>'
+    msg().innerHTML = `<div class="banner">${svt('v_connecting')}</div>`
     const off = id.onVault((e) => {
       if (e.phase === 'challenge') {
         msg().innerHTML = `<div class="sas-box">
-          <p>Tu <strong>código de emparejamiento</strong>:</p>
+          <p>${svt('v_challenge_q')}</p>
           <div class="sas">${esc(e.code)}</div>
-          <p class="muted">Ingresalo en tu PC para conectar este dispositivo (el vault no lo conoce hasta que vos se lo das):</p>
+          <p class="muted">${svt('v_challenge_d')}</p>
           <p><code>dotrino-vault approve ${esc(e.code)}</code></p>
-          <p class="muted">Esperando que lo apruebes en el PC…</p></div>`
+          <p class="muted">${svt('v_challenge_wait')}</p></div>`
       }
     })
     try {
       await id.enrollDevice(qr); off()
-      msg().innerHTML = '<div class="banner ok">✓ ¡Conectado! Este dispositivo ahora usa tu bóveda.</div>'
+      msg().innerHTML = `<div class="banner ok">${svt('v_connected_done')}</div>`
       setTimeout(() => vaultMode(), 1600)
-    } catch (e) { off(); msg().innerHTML = `<div class="banner bad">No se pudo conectar: ${esc(e.message)}</div>` }
+    } catch (e) { off(); msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(e.message))}</div>` }
   }
 
   document.getElementById('connect').onclick = () => {
     try { doConnect(JSON.parse(document.getElementById('qr').value.trim())) }
-    catch { msg().innerHTML = '<div class="banner bad">Ese código pegado no es válido.</div>' }
+    catch { msg().innerHTML = `<div class="banner bad">${svt('v_pasted_invalid')}</div>` }
   }
   document.getElementById('scan').onclick = async () => {
     const text = await scanWithCamera(document.getElementById('scanarea'))
@@ -426,7 +426,7 @@ async function vaultMode (prefillQr) {
   document.getElementById('fileinput').onchange = async (ev) => {
     const f = ev.target.files?.[0]; if (!f) return
     let text
-    if (/^image\//.test(f.type)) { text = await decodeQrFromImage(f); if (!text) { msg().innerHTML = '<div class="banner bad">No encontré un QR en esa imagen.</div>'; return } }
+    if (/^image\//.test(f.type)) { text = await decodeQrFromImage(f); if (!text) { msg().innerHTML = `<div class="banner bad">${svt('v_no_qr_img')}</div>`; return } }
     else { text = await f.text() }
     doConnect(extractPayload(text))
   }
@@ -444,9 +444,11 @@ async function vaultMode (prefillQr) {
 let _svPresenceTimer = null
 const svEl = (h) => { const tp = document.createElement('template'); tp.innerHTML = h.trim(); return tp.content.firstElementChild }
 
-// i18n de la vista #myvault. El toggle del topbar emite 'dotrino-lang'; al cambiar,
-// persistimos y recargamos para servir toda la página en el idioma elegido.
-let svLang = (() => { try { const s = localStorage.getItem('dotrino-lang'); if (s === 'en' || s === 'es') return s } catch {} return (document.documentElement.lang === 'en') ? 'en' : 'es' })()
+// i18n de TODA la app (es/en). El toggle del topbar emite 'dotrino-lang'; al cambiar,
+// persistimos en 'dotrino.lang' (clave estándar del ecosistema, la misma que usa el
+// topbar y el resto de apps) y recargamos para servir toda la página en el idioma elegido.
+let svLang = (() => { try { const s = localStorage.getItem('dotrino.lang'); if (s === 'en' || s === 'es') return s } catch {} return ((navigator.language || '').slice(0, 2) === 'en') ? 'en' : 'es' })()
+try { document.documentElement.lang = svLang } catch {}
 const SV_I18N = {
   es: {
     h: 'Mi bóveda', loading: 'Cargando…',
@@ -464,7 +466,69 @@ const SV_I18N = {
     machines_title: 'Máquinas enlazadas', machines_none: 'Aún no hay máquinas enlazadas.',
     checking: 'comprobando…', online: 'en línea', offline: 'desconectado', revoke: 'Revocar',
     self_link_desc: 'Convierte este dispositivo en tu bóveda para enlazar agentes (ia, terminal) que firmen en tu nombre.',
-    self_link: 'Mi bóveda →'
+    self_link: 'Mi bóveda →',
+    // --- Conectar a la bóveda del PC (#vault) ---
+    v_title: 'Tu bóveda',
+    v_connect_err: 'No se pudo conectar tu identidad. Recarga e inténtalo de nuevo.',
+    v_connected_ok: '✓ Este dispositivo está conectado a tu bóveda.',
+    v_device: 'Dispositivo',
+    v_vault_fp: 'Bóveda (huella)',
+    v_scope: 'Permisos',
+    v_valid_until: 'Conexión válida hasta',
+    v_your_devices: 'Tus dispositivos',
+    v_this: '(este)',
+    v_expires: 'expira',
+    v_dev_rejected: (m) => 'El vault rechazó este dispositivo (' + m + '). Vuelve a conectarlo con `dotrino-vault pair`.',
+    v_dev_load_err: 'No se pudo cargar (¿el vault está encendido?).',
+    v_connect_title: 'Conectar a tu bóveda',
+    v_expired: (d) => `Tu conexión con la bóveda <strong>venció</strong> (${d}). Vuelve a conectar este dispositivo.`,
+    v_intro: 'Conecta este navegador a tu <strong>bóveda</strong> (el programa <code>dotrino-vault</code> en tu PC), para que tu información viva en tu propio servidor. En tu PC ejecuta <code>dotrino-vault pair</code> y <strong>escanea el QR</strong>, abre su imagen/archivo, o pega el código:',
+    v_scan: '📷 Escanear QR',
+    v_openfile: '📁 Abrir imagen/archivo',
+    v_paste_toggle: '…o pegar el código a mano',
+    v_connect_pasted: 'Conectar con el código pegado',
+    v_bad_code: 'No reconocí un código de emparejamiento válido. Vuelve a generar el QR con <code>dotrino-vault pair</code>.',
+    v_old_code: 'Este código es de una <strong>versión vieja</strong> del vault. Actualiza a la última y reinicia el servicio (<code>systemctl --user restart dotrino-vault</code>), confirma con <code>dotrino-vault status</code>, y genera un código nuevo con <code>dotrino-vault pair</code>.',
+    v_pick_profile_q: '¿Con qué perfil quieres conectar esta bóveda?',
+    v_pick_profile_d: 'Cada perfil tiene su propia bóveda. Elige uno existente o conecta uno nuevo.',
+    v_pick_new: '+ Conectar un perfil nuevo',
+    v_profile_noname: 'Perfil sin nombre',
+    v_profile_active: ' · activo',
+    v_connecting: 'Conectando…',
+    v_challenge_q: 'Tu <strong>código de emparejamiento</strong>:',
+    v_challenge_d: 'Ingrésalo en tu PC para conectar este dispositivo (el vault no lo conoce hasta que tú se lo des):',
+    v_challenge_wait: 'Esperando que lo apruebes en el PC…',
+    v_connected_done: '✓ ¡Conectado! Este dispositivo ahora usa tu bóveda.',
+    v_connect_fail: (m) => `No se pudo conectar: ${m}`,
+    v_pasted_invalid: 'Ese código pegado no es válido.',
+    v_no_qr_img: 'No encontré un QR en esa imagen.',
+    // --- Cámara / escáner ---
+    cam_err: 'No se pudo abrir la cámara. Prueba «Abrir imagen/archivo» o pega el código.',
+    // --- Validar firma (#v=) ---
+    val_ok: '✓ Firma válida',
+    val_ok_by: (n) => ` — firmado por <strong>${n}</strong>`,
+    val_bad: '✗ Firma inválida o no verificable',
+    // --- Estados de error ---
+    err_invalid_title: 'Link inválido',
+    err_invalid_body: 'Este enlace no es válido.',
+    err_noid_title: 'No se pudo conectar tu identidad',
+    err_noid_body: 'Esto requiere tu identidad de Dotrino. Recarga e inténtalo de nuevo.',
+    // --- Perfil propio + PIN ---
+    tag_identity: 'Tu identidad',
+    tag_profiles: 'Perfiles',
+    prof_title: 'Tu perfil',
+    pin_title: '🔒 Protección con PIN',
+    pin_remove: 'Quitar el PIN',
+    pin_protect: 'Proteger con PIN',
+    pin_desc: 'Protege el perfil activo <strong>solo en este dispositivo</strong> (no se comparte ni se sincroniza). Se pide una vez por pestaña; refrescar no lo vuelve a pedir.',
+    pin_remove_q: '¿Quitar el PIN de este perfil en este dispositivo?',
+    pin_ph1: 'PIN (mín. 4)',
+    pin_ph2: 'Repite el PIN',
+    pin_go: 'Proteger',
+    pin_min: 'Mínimo 4 caracteres.',
+    pin_mismatch: 'No coinciden.',
+    del_msg: '¿Borrar este perfil y todos sus datos? No se puede deshacer.',
+    del_yes: 'Borrar'
   },
   en: {
     h: 'My vault', loading: 'Loading…',
@@ -482,7 +546,69 @@ const SV_I18N = {
     machines_title: 'Linked machines', machines_none: 'No machines linked yet.',
     checking: 'checking…', online: 'online', offline: 'offline', revoke: 'Revoke',
     self_link_desc: 'Turn this device into your vault to link agents (ia, terminal) that sign on your behalf.',
-    self_link: 'My vault →'
+    self_link: 'My vault →',
+    // --- Connect to the PC vault (#vault) ---
+    v_title: 'Your vault',
+    v_connect_err: 'Could not connect your identity. Reload and try again.',
+    v_connected_ok: '✓ This device is connected to your vault.',
+    v_device: 'Device',
+    v_vault_fp: 'Vault (fingerprint)',
+    v_scope: 'Permissions',
+    v_valid_until: 'Connection valid until',
+    v_your_devices: 'Your devices',
+    v_this: '(this one)',
+    v_expires: 'expires',
+    v_dev_rejected: (m) => 'The vault rejected this device (' + m + '). Reconnect it with `dotrino-vault pair`.',
+    v_dev_load_err: 'Could not load (is the vault on?).',
+    v_connect_title: 'Connect to your vault',
+    v_expired: (d) => `Your vault connection <strong>expired</strong> (${d}). Connect this device again.`,
+    v_intro: 'Connect this browser to your <strong>vault</strong> (the <code>dotrino-vault</code> program on your PC), so your information lives on your own server. On your PC run <code>dotrino-vault pair</code> and <strong>scan the QR</strong>, open its image/file, or paste the code:',
+    v_scan: '📷 Scan QR',
+    v_openfile: '📁 Open image/file',
+    v_paste_toggle: '…or paste the code by hand',
+    v_connect_pasted: 'Connect with the pasted code',
+    v_bad_code: 'I did not recognize a valid pairing code. Generate the QR again with <code>dotrino-vault pair</code>.',
+    v_old_code: 'This code is from an <strong>old version</strong> of the vault. Update to the latest and restart the service (<code>systemctl --user restart dotrino-vault</code>), confirm with <code>dotrino-vault status</code>, and generate a new code with <code>dotrino-vault pair</code>.',
+    v_pick_profile_q: 'Which profile do you want to connect this vault to?',
+    v_pick_profile_d: 'Each profile has its own vault. Choose an existing one or connect a new one.',
+    v_pick_new: '+ Connect a new profile',
+    v_profile_noname: 'Unnamed profile',
+    v_profile_active: ' · active',
+    v_connecting: 'Connecting…',
+    v_challenge_q: 'Your <strong>pairing code</strong>:',
+    v_challenge_d: 'Enter it on your PC to connect this device (the vault does not know it until you give it to it):',
+    v_challenge_wait: 'Waiting for you to approve it on the PC…',
+    v_connected_done: '✓ Connected! This device now uses your vault.',
+    v_connect_fail: (m) => `Could not connect: ${m}`,
+    v_pasted_invalid: 'That pasted code is not valid.',
+    v_no_qr_img: 'I could not find a QR in that image.',
+    // --- Camera / scanner ---
+    cam_err: 'Could not open the camera. Try «Open image/file» or paste the code.',
+    // --- Signature validation (#v=) ---
+    val_ok: '✓ Valid signature',
+    val_ok_by: (n) => ` — signed by <strong>${n}</strong>`,
+    val_bad: '✗ Invalid or unverifiable signature',
+    // --- Error states ---
+    err_invalid_title: 'Invalid link',
+    err_invalid_body: 'This link is not valid.',
+    err_noid_title: 'Could not connect your identity',
+    err_noid_body: 'This requires your Dotrino identity. Reload and try again.',
+    // --- Own profile + PIN ---
+    tag_identity: 'Your identity',
+    tag_profiles: 'Profiles',
+    prof_title: 'Your profile',
+    pin_title: '🔒 PIN protection',
+    pin_remove: 'Remove PIN',
+    pin_protect: 'Protect with PIN',
+    pin_desc: 'Protects the active profile <strong>on this device only</strong> (not shared or synced). Asked once per tab; refreshing does not ask again.',
+    pin_remove_q: 'Remove the PIN of this profile on this device?',
+    pin_ph1: 'PIN (min. 4)',
+    pin_ph2: 'Repeat the PIN',
+    pin_go: 'Protect',
+    pin_min: 'Minimum 4 characters.',
+    pin_mismatch: 'They do not match.',
+    del_msg: 'Delete this profile and all its data? This cannot be undone.',
+    del_yes: 'Delete'
   }
 }
 function svt (k, ...a) { const v = SV_I18N[svLang]?.[k]; return String(typeof v === 'function' ? v(...a) : (v ?? k)) }
@@ -492,7 +618,7 @@ function wireLangReload () {
   tb.setAttribute('lang', svLang)
   tb.addEventListener('dotrino-lang', (e) => {
     const l = e.detail?.lang === 'en' ? 'en' : 'es'
-    try { localStorage.setItem('dotrino-lang', l) } catch {}
+    try { localStorage.setItem('dotrino.lang', l) } catch {}
     document.documentElement.lang = l
     window.location.reload()
   })
@@ -676,8 +802,8 @@ async function main() {
     const signed = { op: p.op || 'app-request', text: p.text, ts: p.ts }
     const ok = await verifySig(p.pubkey, signed, p.signature)
     const banner = ok
-      ? `<div class="banner ok">✓ Firma válida${p.nickname ? ` — firmado por <strong>${esc(p.nickname)}</strong>` : ''}</div>`
-      : `<div class="banner bad">✗ Firma inválida o no verificable</div>`
+      ? `<div class="banner ok">${svt('val_ok')}${p.nickname ? svt('val_ok_by', esc(p.nickname)) : ''}</div>`
+      : `<div class="banner bad">${svt('val_bad')}</div>`
     const content = p.text ? `<div class="content">${esc(p.text)}</div>` : ''
     mount.innerHTML = `<div class="validate-wrap">${banner}${content}<div id="prof"></div></div>`
     if (p.pubkey) {
@@ -689,14 +815,14 @@ async function main() {
   }
 
   if (data.mode === 'invalid') {
-    showState('Link inválido', '<p>Este enlace no es válido.</p>')
+    showState(svt('err_invalid_title'), `<p>${svt('err_invalid_body')}</p>`)
     return
   }
 
   // ── RATE (#pubkey) o SELF (sin hash): perfil modal, requiere identidad ──
   let id, provider
   try { ({ id, provider } = await connectProvider()) } catch {
-    showState('No se pudo conectar tu identidad', '<p>Esto requiere tu identidad de Dotrino. Recarga e inténtalo de nuevo.</p>')
+    showState(svt('err_noid_title'), `<p>${svt('err_noid_body')}</p>`)
     return
   }
 
@@ -714,7 +840,7 @@ async function main() {
   // PIN, exclusiva de ESTA página (no aparece en el popup de las otras apps).
   if (mode === 'self') {
     injectVaultStyles()
-    vaultShell('Tu perfil', `<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">${esc(svt('self_link_desc'))}</p><a href="#myvault" data-testid="goto-myvault">${esc(svt('self_link'))}</a></div></div>`, 'Perfiles')
+    vaultShell(svt('prof_title'), `<div class="vault-wrap"><div id="self-prof"></div><div id="pin-section"></div><div class="sv-link-row"><p class="status">${esc(svt('self_link_desc'))}</p><a href="#myvault" data-testid="goto-myvault">${esc(svt('self_link'))}</a></div></div>`, svt('tag_profiles'))
     wireLangReload()
     const el = makeProfile({ pubkey, name, since, mode, modal: false, manage: true })
     el.provider = provider
