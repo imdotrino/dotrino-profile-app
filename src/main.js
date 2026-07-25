@@ -808,8 +808,21 @@ async function selfVaultMode () {
   render()
 }
 
+/* La gestión de dispositivos y bóvedas se MUDÓ a vault.dotrino.com — una sola consola
+   para todo el ecosistema, en vez de repartirla entre apps (ver
+   dotrino-vault/docs/acta-de-perfil.md §3). Aquí solo queda el reenvío, para que los
+   códigos de emparejamiento y los enlaces viejos sigan funcionando. El token viaja en
+   el `#fragment`, que nunca llega a ningún servidor: se traslada tal cual. */
+const CONSOLE_URL = 'https://vault.dotrino.com/dispositivos'
+function redirectToConsole (data) {
+  const b64 = (location.hash.match(/#vault=([^&]+)/) || [])[1]
+  location.replace(b64 ? `${CONSOLE_URL}#vault=${b64}` : CONSOLE_URL)
+}
+
 async function main() {
   const data = parseRoute()
+
+  if (data.mode === 'vault' || data.mode === 'selfvault' || data.token) return redirectToConsole(data)
 
   let pendingPair = false
   try { pendingPair = !!sessionStorage.getItem('cc-pair-intent') } catch (_) {}
