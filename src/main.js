@@ -83,6 +83,7 @@ function parseRoute() {
   const seg = location.pathname.replace(/\/+$/, '').split('/').pop().toLowerCase()
   if (seg === 'myvault' || h === 'myvault') return { mode: 'selfvault', legacy: h === 'myvault' }
   if (seg === 'vault' || h === 'vault') return { mode: 'vault', legacy: h === 'vault' }
+  if (seg === 'create') return { mode: 'create' }
   // 3) CALIFICAR (#<pubkey> o #p=…) — dato público, se queda como hash.
   if (h) {
     if (h.includes('=')) {
@@ -168,6 +169,15 @@ function injectVaultStyles () {
     .pf-nameform, .pf-confirm { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
     .pf-nameform input { flex: 1 1 auto; padding: 9px 11px; border: 1px solid #cfd8de; border-radius: 8px; font-size: 14px; }
     .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: #b3261e; }
+    /* ── /create: crear un perfil ── */
+    .cp-field { display: flex; flex-direction: column; gap: 4px; margin: 14px 0; }
+    .cp-field span { font-weight: 600; font-size: 14px; }
+    .cp-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border, #d4c4a8); background: var(--bg-1, #fff); color: inherit; font: inherit; }
+    .cp-field small { font-size: 12px; }
+    .cp-more { margin: 18px 0; }
+    .cp-more summary { cursor: pointer; font-weight: 600; }
+    .cp-more > p { margin: 8px 0 4px; font-size: 13px; }
+
     /* ── Self-vault (#myvault): este dispositivo ES la bóveda ── */
     .sv-status { display: inline-block; margin: 4px 0 12px; font-size: .82rem; color: #137333; }
     .sv-status.bad { color: #b3261e; }
@@ -419,7 +429,12 @@ async function vaultMode (prefillQr) {
         if (cur && pid === cur.id) { doConnect(qr, true) } // ya activo → emparejar directo
         else { sessionStorage.setItem('cc-pair-intent', JSON.stringify(qr)); await id.switchProfile(pid); location.reload() }
       } })
-      msg().querySelector('#pick-new').onclick = async () => { sessionStorage.setItem('cc-pair-intent', JSON.stringify(qr)); await id.createProfile(''); location.reload() }
+      // Crear un perfil es un acto explícito: se va a /create y al guardar se vuelve aquí
+      // con el emparejamiento en curso (guardado en sessionStorage).
+      msg().querySelector('#pick-new').onclick = () => {
+        sessionStorage.setItem('cc-pair-intent', JSON.stringify(qr))
+        location.href = appBase() + 'create?return=' + encodeURIComponent(appBase() + 'vault')
+      }
       return
     }
     msg().innerHTML = `<div class="banner">${svt('v_connecting')}</div>`
@@ -819,9 +834,99 @@ function redirectToConsole (data) {
   location.replace(b64 ? `${CONSOLE_URL}#vault=${b64}` : CONSOLE_URL)
 }
 
+/* ── /create: crear un perfil, con nombre y (si quieres) algún dato más ──
+   Que sea una PÁGINA y no un botón escondido es a propósito: crear un perfil es un acto
+   del dueño, no un efecto colateral de pulsar algo en un modal. Hasta que no le das a
+   guardar aquí, no existe nada — antes el modal creaba un «Perfil sin nombre» al vuelo.
+   Y solo el NOMBRE es público: lo demás nace oculto y tú decides si lo enseñas. */
+const CREATE_I18N = {
+  es: {
+    title: 'Crear un perfil',
+    lead: 'Un perfil es una identidad tuya en este dispositivo: su propia llave, sus propios datos. Puedes tener varios (personal, trabajo) y cambiar entre ellos cuando quieras.',
+    nick: 'Nombre', nickPh: '¿Cómo quieres que te llamen?',
+    nickHelp: 'Es lo único que se comparte. Puedes cambiarlo después.',
+    more: 'Añadir algún dato más (opcional)',
+    moreHelp: 'Nada de esto se comparte: nace oculto y tú decides después si lo enseñas y a quién.',
+    f: { nombres: 'Nombres', apellidos: 'Apellidos', email: 'Correo', telefono: 'Teléfono', direccion: 'Dirección' },
+    save: 'Crear el perfil', saving: 'Creando…', cancel: 'Cancelar',
+    needNick: 'Ponle un nombre para poder crearlo.',
+    done: 'Listo. Este es tu perfil nuevo.',
+    fail: 'No se pudo crear: '
+  },
+  en: {
+    title: 'Create a profile',
+    lead: 'A profile is one of your identities on this device: its own key, its own data. You can have several (personal, work) and switch whenever you want.',
+    nick: 'Name', nickPh: 'What should we call you?',
+    nickHelp: 'It is the only thing that gets shared. You can change it later.',
+    more: 'Add something else (optional)',
+    moreHelp: 'None of this is shared: it starts hidden and you decide later whether to show it, and to whom.',
+    f: { nombres: 'First name', apellidos: 'Last name', email: 'Email', telefono: 'Phone', direccion: 'Address' },
+    save: 'Create the profile', saving: 'Creating…', cancel: 'Cancel',
+    needNick: 'Give it a name to create it.',
+    done: 'Done. This is your new profile.',
+    fail: 'Could not create it: '
+  }
+}
+
+async function createProfileMode () {
+  injectVaultStyles()
+  const t = CREATE_I18N[svLang] || CREATE_I18N.es
+  const volver = new URLSearchParams(location.search).get('return') || ''
+
+  vaultShell(t.title, `<div class="vault-wrap">
+    <p>${esc(t.lead)}</p>
+    <label class="cp-field">
+      <span>${esc(t.nick)}</span>
+      <input id="cp-nick" type="text" maxlength="40" placeholder="${esc(t.nickPh)}" autocomplete="nickname" data-testid="nick" />
+      <small class="muted">${esc(t.nickHelp)}</small>
+    </label>
+    <details class="cp-more">
+      <summary>${esc(t.more)}</summary>
+      <p class="muted">${esc(t.moreHelp)}</p>
+      ${['nombres', 'apellidos', 'email', 'telefono', 'direccion'].map((k) => `
+        <label class="cp-field"><span>${esc(t.f[k])}</span>
+          <input id="cp-${k}" type="${k === 'email' ? 'email' : k === 'telefono' ? 'tel' : 'text'}" maxlength="200" /></label>`).join('')}
+    </details>
+    <div class="scanrow">
+      <button id="cp-save" class="btn" data-testid="crear">${esc(t.save)}</button>
+      <button id="cp-cancel" class="btn ghost">${esc(t.cancel)}</button>
+    </div>
+    <div id="cp-msg"></div>
+  </div>`)
+  wireLangReload()
+
+  const msg = () => document.getElementById('cp-msg')
+  document.getElementById('cp-cancel').onclick = () => { location.href = volver || appBase() }
+  document.getElementById('cp-nick').focus()
+
+  document.getElementById('cp-save').onclick = async () => {
+    const nick = document.getElementById('cp-nick').value.trim()
+    if (!nick) { msg().innerHTML = `<div class="banner bad">${esc(t.needNick)}</div>`; return }
+    const btn = document.getElementById('cp-save')
+    btn.disabled = true; btn.textContent = t.saving
+    try {
+      const id = await Identity.connect()
+      await id.createProfile(nick)
+      // Los datos extra nacen OCULTOS: solo el nombre es público por defecto.
+      const patch = {}
+      for (const k of ['nombres', 'apellidos', 'email', 'telefono', 'direccion']) {
+        const v = document.getElementById('cp-' + k).value.trim()
+        if (v) { patch[k] = v; patch[k + 'Visible'] = false }
+      }
+      if (Object.keys(patch).length) await id.updateMe(patch)
+      msg().innerHTML = `<div class="banner ok">${esc(t.done)}</div>`
+      setTimeout(() => { location.href = volver || appBase() }, 900)
+    } catch (e) {
+      btn.disabled = false; btn.textContent = t.save
+      msg().innerHTML = `<div class="banner bad">${esc(t.fail + (e?.message || e))}</div>`
+    }
+  }
+}
+
 async function main() {
   const data = parseRoute()
 
+  if (data.mode === 'create') return createProfileMode()
   if (data.mode === 'vault' || data.mode === 'selfvault' || data.token) return redirectToConsole(data)
 
   let pendingPair = false
