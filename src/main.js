@@ -1,5 +1,5 @@
 /**
- * dotrino_profile — perfil + calificación + validación de firma (web-of-trust).
+ * dotrino-profile-app — perfil + calificación + validación de firma (web-of-trust).
  *
  * Modos según el #fragment (nunca llega al server, no indexable):
  *   #<pubkey>            → calificar al sujeto del link (mode="edit").
@@ -259,7 +259,7 @@ function scanWithCamera (host) {
 function vaultShell (title, inner, tag = svt('tag_identity')) {
   mount.innerHTML = `<div class="vault-page">
     <dotrino-topbar class="vault-topbar" brand-href="https://dotrino.com/"
-      support-repo="imdotrino/dotrino_profile" support-discord="https://discord.gg/D648uq7cth" profile>
+      support-repo="imdotrino/dotrino-profile-app" support-discord="https://discord.gg/D648uq7cth" profile>
       <div slot="brand" class="brand"><img class="brand-logo" src="/images/imagoWBG.png" alt="" /><div class="brand-text"><span class="brand-name">Dotrino</span><span class="brand-tag">${esc(tag)}</span></div></div>
     </dotrino-topbar>
     <main class="vault-main"><div class="vault-card">${title ? `<h1>${esc(title)}</h1>` : ''}${inner}</div></main>

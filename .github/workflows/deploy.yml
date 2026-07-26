@@ -1,4 +1,4 @@
-name: Deploy dotrino_profile to GitHub Pages
+name: Deploy dotrino-profile-app to GitHub Pages
 
 on:
   push:
