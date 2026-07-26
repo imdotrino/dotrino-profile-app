@@ -12,7 +12,7 @@ import path from 'node:path'
 // resuelven bien desde `/myvault` (mismo directorio `/`) y desde el mirror github.io.
 // `404.html` queda como red de seguridad para cualquier otra ruta sin archivo.
 function spaRoutes () {
-  const views = ['404.html', 'myvault.html', 'vault.html']
+  const views = ['404.html', 'myvault.html', 'vault.html', 'create.html']
   return {
     name: 'spa-routes',
     closeBundle () {

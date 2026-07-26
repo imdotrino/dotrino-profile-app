@@ -267,24 +267,23 @@ function vaultShell (title, inner, tag = svt('tag_identity')) {
   decorateProfileButton()
 }
 
-// El botón de perfil del topbar (§6.1) muestra el AVATAR del perfil activo y abre
-// el GESTOR de perfiles (esta app ES el hub de identidad): switcher + proteger con
-// PIN + "ver mi perfil". El topbar emite 'dotrino-profile'; el avatar va por atributo.
+/**
+ * El botón de perfil del topbar (§6.1) se comporta IGUAL que en el resto del ecosistema:
+ * abre el modal «Mi perfil», y al pasar el ratón ofrece el cambio rápido de perfil.
+ *
+ * Antes, aquí y solo aquí, navegaba a `/` con el argumento de que esta app es el hub de
+ * identidad y el modal sería redundante. Era un error: el mismo botón, en el mismo sitio,
+ * haciendo algo distinto según la página es justo lo que hace que una interfaz no se pueda
+ * aprender. Que sobre información en esta página no justifica cambiarle el gesto.
+ */
 async function decorateProfileButton () {
   const tb = mount.querySelector('dotrino-topbar'); if (!tb) return
-  // profile.dotrino.com ES el hub de identidad: el avatar lleva a la página del
-  // perfil (donde está todo inline), en vez de abrir un popup redundante.
-  tb.addEventListener('dotrino-profile', () => { location.href = '/' })
   try {
     const id = await Identity.connect()
-    const cur = await id.currentProfile()
-    // Preferir la FOTO subida del perfil activo (me.avatar, data-URI); si no se
-    // subió ninguna, caer al identicon determinista del pubkey.
-    let avatar = null
-    try { const me = await id.getMe(); if (me && me.avatar) avatar = me.avatar } catch (_) {}
-    if (!avatar && cur?.pubkey) avatar = avatarDataUri(cur.pubkey, { size: 72 })
-    if (avatar) tb.setAttribute('avatar', avatar)
-  } catch (_) { /* deja el ícono genérico */ }
+    // Con identity + reputation, el topbar es dueño del modal y lo abre él mismo.
+    tb.identity = id
+    tb.reputation = createVaultReputation(id)
+  } catch (_) { /* sin identidad, el botón queda con el ícono genérico */ }
 }
 
 // Sección de PIN INLINE en la página (NO en popup). El PIN protege el perfil
