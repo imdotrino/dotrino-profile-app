@@ -411,29 +411,18 @@ async function vaultMode (prefillQr) {
   async function doConnect (qr, skip) {
     if (!qr || !qr.iss || !qr.token) { msg().innerHTML = `<div class="banner bad">${svt('v_bad_code')}</div>`; return }
     if (!qr.sn || (qr.v && qr.v < 2)) { msg().innerHTML = `<div class="banner bad">${svt('v_old_code')}</div>`; return }
-    // Elegir CON QUÉ PERFIL conectar esta bóveda (o uno nuevo) ANTES de emparejar.
+    // Ya no se elige «con qué perfil conectar esta bóveda»: esa pregunta era del modelo
+    // viejo, en el que enganchar la bóveda a una cuenta existente la reemplazaba por la
+    // suya. Hoy hay un solo camino disponible (§3 de `vinculacion-de-cuentas.md`): la
+    // cuenta de la bóveda entra aquí como una cuenta MÁS, con llave nueva, y la que
+    // estabas usando no se toca. Se avisa antes, no después.
     if (!skip) {
-      const profiles = await id.listProfiles().catch(() => [])
-      const cur = profiles.find((p) => p.current) || profiles[0]
       msg().innerHTML = `<div class="sas-box" style="text-align:left">
-        <p><strong>${svt('v_pick_profile_q')}</strong></p>
-        <p class="muted">${svt('v_pick_profile_d')}</p>
-        <div class="pf-pick" style="display:flex;flex-direction:column;gap:8px;margin:10px 0"></div>
-        <button class="btn ghost" id="pick-new">${svt('v_pick_new')}</button>
+        <p><strong>${svt('v_new_account_q')}</strong></p>
+        <p class="muted">${svt('v_new_account_d')}</p>
+        <button class="btn" id="pick-go">${svt('v_new_account_go')}</button>
       </div>`
-      const host = msg().querySelector('.pf-pick')
-      host.innerHTML = profiles.map((p) => `<button class="btn ${p.current ? '' : 'ghost'} pick-prof" data-id="${esc(p.id)}">${esc(p.name || svt('v_profile_noname'))}${p.current ? svt('v_profile_active') : ''}</button>`).join('')
-      host.querySelectorAll('.pick-prof').forEach((b) => { b.onclick = async () => {
-        const pid = b.dataset.id
-        if (cur && pid === cur.id) { doConnect(qr, true) } // ya activo → emparejar directo
-        else { sessionStorage.setItem('cc-pair-intent', JSON.stringify(qr)); await id.switchProfile(pid); location.reload() }
-      } })
-      // Crear un perfil es un acto explícito: se va a /create y al guardar se vuelve aquí
-      // con el emparejamiento en curso (guardado en sessionStorage).
-      msg().querySelector('#pick-new').onclick = () => {
-        sessionStorage.setItem('cc-pair-intent', JSON.stringify(qr))
-        location.href = appBase() + 'create?return=' + encodeURIComponent(appBase() + 'vault')
-      }
+      msg().querySelector('#pick-go').onclick = () => doConnect(qr, true)
       return
     }
     msg().innerHTML = `<div class="banner">${svt('v_connecting')}</div>`
@@ -451,7 +440,8 @@ async function vaultMode (prefillQr) {
       // Camino B: la cuenta de la bóveda entra aquí como una cuenta MÁS (llave nueva).
       // La que estabas usando no se toca. Ver `vinculacion-de-cuentas.md` §3.
       await id.enrollDevice(qr, { join: 'new' }); off()
-      msg().innerHTML = `<div class="banner ok">${svt('v_connected_done')}</div>`
+      msg().innerHTML = `<div class="banner ok">${svt('v_connected_done')}</div>
+        <div class="banner"><strong>${svt('v_two_title')}</strong><p>${svt('v_two_body')}</p></div>`
       setTimeout(() => vaultMode(), 1600)
     } catch (e) { off(); msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(e.message))}</div>` }
   }
@@ -531,11 +521,11 @@ const SV_I18N = {
     v_connect_pasted: 'Conectar con el código pegado',
     v_bad_code: 'No reconocí un código de emparejamiento válido. Vuelve a generar el QR con <code>dotrino-vault pair</code>.',
     v_old_code: 'Este código es de una <strong>versión vieja</strong> del vault. Actualiza a la última y reinicia el servicio (<code>systemctl --user restart dotrino-vault</code>), confirma con <code>dotrino-vault status</code>, y genera un código nuevo con <code>dotrino-vault pair</code>.',
-    v_pick_profile_q: '¿Con qué perfil quieres conectar esta bóveda?',
-    v_pick_profile_d: 'Cada perfil tiene su propia bóveda. Elige uno existente o conecta uno nuevo.',
-    v_pick_new: '+ Conectar un perfil nuevo',
-    v_profile_noname: 'Perfil sin nombre',
-    v_profile_active: ' · activo',
+    v_new_account_q: 'Se creará aquí una cuenta nueva: la de tu bóveda.',
+    v_new_account_d: 'La cuenta que estás usando ahora no se toca. Al terminar tendrás dos en este aparato y podrás cambiar entre ellas desde el botón de tu foto.',
+    v_new_account_go: 'Entendido, conectar',
+    v_two_title: 'Ahora tienes dos cuentas en este aparato',
+    v_two_body: 'La que ya usabas sigue intacta. Si no quieres conservarla, ábrela en «Tus perfiles» (aquí abajo) y pulsa Borrar: se va con todo lo suyo y no se puede deshacer.',
     v_connecting: 'Conectando…',
     v_challenge_q: 'Tu <strong>código de emparejamiento</strong>:',
     v_challenge_d: 'Ingrésalo en tu PC para conectar este dispositivo (el vault no lo conoce hasta que tú se lo des):',
@@ -611,11 +601,11 @@ const SV_I18N = {
     v_connect_pasted: 'Connect with the pasted code',
     v_bad_code: 'I did not recognize a valid pairing code. Generate the QR again with <code>dotrino-vault pair</code>.',
     v_old_code: 'This code is from an <strong>old version</strong> of the vault. Update to the latest and restart the service (<code>systemctl --user restart dotrino-vault</code>), confirm with <code>dotrino-vault status</code>, and generate a new code with <code>dotrino-vault pair</code>.',
-    v_pick_profile_q: 'Which profile do you want to connect this vault to?',
-    v_pick_profile_d: 'Each profile has its own vault. Choose an existing one or connect a new one.',
-    v_pick_new: '+ Connect a new profile',
-    v_profile_noname: 'Unnamed profile',
-    v_profile_active: ' · active',
+    v_new_account_q: 'A new account will be created here: your vault\'s.',
+    v_new_account_d: 'The account you are using now is left untouched. When it is done you will have two on this device and can switch between them from your photo button.',
+    v_new_account_go: 'Got it, connect',
+    v_two_title: 'You now have two accounts on this device',
+    v_two_body: 'The one you were using is untouched. If you do not want to keep it, open it under “Your profiles” (below) and press Delete: it goes with everything in it and cannot be undone.',
     v_connecting: 'Connecting…',
     v_challenge_q: 'Your <strong>pairing code</strong>:',
     v_challenge_d: 'Enter it on your PC to connect this device (the vault does not know it until you give it to it):',
