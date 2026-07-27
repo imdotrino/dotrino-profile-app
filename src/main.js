@@ -448,7 +448,9 @@ async function vaultMode (prefillQr) {
       }
     })
     try {
-      await id.enrollDevice(qr); off()
+      // Camino B: la cuenta de la bóveda entra aquí como una cuenta MÁS (llave nueva).
+      // La que estabas usando no se toca. Ver `vinculacion-de-cuentas.md` §3.
+      await id.enrollDevice(qr, { join: 'new' }); off()
       msg().innerHTML = `<div class="banner ok">${svt('v_connected_done')}</div>`
       setTimeout(() => vaultMode(), 1600)
     } catch (e) { off(); msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(e.message))}</div>` }
