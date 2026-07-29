@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { execSync } from 'node:child_process'
 
 // App interna chica (sin framework): el perfil es un Web Component.
 // Usa PATHS para las vistas (/myvault, /vault) además de la home (/). GitHub Pages
@@ -23,8 +24,20 @@ function spaRoutes () {
   }
 }
 
+// <meta name="commit"> con el hash del commit del build (CONVENCIONES-APPS §3).
+function commitMeta () {
+  let hash = 'dev'
+  try { hash = execSync('git rev-parse --short HEAD').toString().trim() } catch { /* sin git */ }
+  return {
+    name: 'commit-meta',
+    transformIndexHtml: (html) =>
+      html.replace('</head>', `  <meta name="commit" content="${hash}" />
+  </head>`),
+  }
+}
+
 export default defineConfig({
   base: './',
   build: { target: 'es2020' },
-  plugins: [spaRoutes()],
+  plugins: [commitMeta(), spaRoutes()],
 })
