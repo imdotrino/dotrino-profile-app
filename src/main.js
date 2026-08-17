@@ -354,7 +354,7 @@ async function vaultMode (prefillQr) {
   try { const r = sessionStorage.getItem('cc-pair-intent'); if (r) { sessionStorage.removeItem('cc-pair-intent'); intentQr = JSON.parse(r) } } catch (_) {}
   const status = intentQr ? { paired: false } : await id.vaultStatus().catch(() => ({ paired: false }))
   // Cert de dispositivo VENCIDO = ya no estás conectado (el vault rechaza todo con
-  // "no autorizado"): tratarlo como no emparejado, con aviso, y ofrecer re-conectar.
+  // "unauthorized"): tratarlo como no emparejado, con aviso, y ofrecer re-conectar.
   const expired = status.paired && status.exp && status.exp <= Date.now()
 
   if (status.paired && !expired) {
@@ -382,8 +382,10 @@ async function vaultMode (prefillQr) {
       }).join('') + '</ul>'
     }).catch((e) => {
       const box = document.getElementById('devlist'); if (!box) return
-      // Distinguir "no autorizado" (cert rechazado/revocado) de "vault apagado".
-      box.textContent = /no autorizado/i.test(e?.message || '')
+      // Distinguir "unauthorized" (cert rechazado/revocado) de "vault apagado". El texto
+      // es el que manda la bóveda —el daemon del PC y el iframe dicen el mismo desde
+      // @dotrino/vault 0.24.0—, así que si algún día vuelve a cambiar, esto va detrás.
+      box.textContent = /unauthorized/i.test(e?.message || '')
         ? svt('v_dev_rejected', e.message)
         : svt('v_dev_load_err')
     })
