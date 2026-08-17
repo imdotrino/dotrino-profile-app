@@ -445,7 +445,23 @@ async function vaultMode (prefillQr) {
       msg().innerHTML = `<div class="banner ok">${svt('v_connected_done')}</div>
         <div class="banner"><strong>${svt('v_two_title')}</strong><p>${svt('v_two_body')}</p></div>`
       setTimeout(() => vaultMode(), 1600)
-    } catch (e) { off(); msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(e.message))}</div>` }
+    } catch (e) {
+      off()
+      // Esa bóveda ya vive en OTRA cuenta de este aparato: no se duplica, se te lleva a
+      // ella. Por `code` y no por el texto del error (que se traduce y cambia).
+      if (e?.code === 'ALREADY_PAIRED') {
+        const otra = e.detail?.profile
+        msg().innerHTML = `<div class="banner">${svt('v_already_paired', esc(e.detail?.name || ''))}</div>
+          <div><button class="btn" id="go-other">${svt('v_already_paired_go')}</button></div>`
+        msg().querySelector('#go-other').onclick = async () => {
+          // Cambiar de cuenta no es reactivo (por diseño): se recarga para entrar con ella.
+          try { await id.switchProfile(otra); location.reload() }
+          catch (err) { msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(err.message))}</div>` }
+        }
+        return
+      }
+      msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(e.message))}</div>`
+    }
   }
 
   document.getElementById('connect').onclick = () => {
@@ -534,6 +550,8 @@ const SV_I18N = {
     v_challenge_wait: 'Esperando que lo apruebes en el PC…',
     v_connected_done: '✓ ¡Conectado! Este dispositivo ahora usa tu bóveda.',
     v_connect_fail: (m) => `No se pudo conectar: ${m}`,
+    v_already_paired: (n) => `Esa bóveda ya está en este dispositivo, en la cuenta <strong>${n || 'sin nombre'}</strong>. No hace falta conectarla otra vez: entra con esa cuenta.`,
+    v_already_paired_go: 'Entrar con esa cuenta',
     v_pasted_invalid: 'Ese código pegado no es válido.',
     v_no_qr_img: 'No encontré un QR en esa imagen.',
     // --- Cámara / escáner ---
@@ -614,6 +632,8 @@ const SV_I18N = {
     v_challenge_wait: 'Waiting for you to approve it on the PC…',
     v_connected_done: '✓ Connected! This device now uses your vault.',
     v_connect_fail: (m) => `Could not connect: ${m}`,
+    v_already_paired: (n) => `That vault is already on this device, under the account <strong>${n || 'unnamed'}</strong>. There is no need to connect it again: open that account.`,
+    v_already_paired_go: 'Open that account',
     v_pasted_invalid: 'That pasted code is not valid.',
     v_no_qr_img: 'I could not find a QR in that image.',
     // --- Camera / scanner ---
