@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@dotrino/identity": "0.52.0",
@@ -18,6 +19,7 @@
     "qrcode-generator": "1.4.4"
   },
   "devDependencies": {
+    "typescript": "5.9.3",
     "vite": "7.3.2"
   }
 }
