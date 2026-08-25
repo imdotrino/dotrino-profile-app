@@ -35,6 +35,13 @@
         --ccp-affinity: #2f8fd6; --ccp-input-bg: #f1f4f6; --ccp-radius: 16px;
       }
     </style>
+  <!-- PWA (CONVENCIONES §3): manifiesto, tema e iconos de pantalla de inicio. -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#00658c" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Perfil" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
   </head>
   <body>
     <div id="app">
@@ -43,5 +50,13 @@
     <!-- Moneda de support del ecosistema (CONVENCIONES §6, Web Component @0.6). -->
     <script type="module" src="https://cdn.jsdelivr.net/npm/@dotrino/support@0.6/src/index.js"></script>
     <script type="module" src="/src/main.js"></script>
+  <script>
+    // Registro del service worker (§3): la app queda disponible sin conexión.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {})
+      })
+    }
+  </script>
   </body>
 </html>
