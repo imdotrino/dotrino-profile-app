@@ -884,7 +884,7 @@ const CREATE_I18N = {
 async function createProfileMode () {
   injectVaultStyles()
   const t = CREATE_I18N[svLang] || CREATE_I18N.es
-  const volver = new URLSearchParams(location.search).get('return') || ''
+  const returnUrl = new URLSearchParams(location.search).get('return') || ''
 
   vaultShell(t.title, `<div class="vault-wrap">
     <p>${esc(t.lead)}</p>
@@ -909,7 +909,7 @@ async function createProfileMode () {
   wireLangReload()
 
   const msg = () => document.getElementById('cp-msg')
-  document.getElementById('cp-cancel').onclick = () => { location.href = volver || appBase() }
+  document.getElementById('cp-cancel').onclick = () => { location.href = returnUrl || appBase() }
   document.getElementById('cp-nick').focus()
 
   document.getElementById('cp-save').onclick = async () => {
@@ -928,7 +928,7 @@ async function createProfileMode () {
       }
       if (Object.keys(patch).length) await id.updateMe(patch)
       msg().innerHTML = `<div class="banner ok">${esc(t.done)}</div>`
-      setTimeout(() => { location.href = volver || appBase() }, 900)
+      setTimeout(() => { location.href = returnUrl || appBase() }, 900)
     } catch (e) {
       btn.disabled = false; btn.textContent = t.save
       msg().innerHTML = `<div class="banner bad">${esc(t.fail + (e?.message || e))}</div>`
