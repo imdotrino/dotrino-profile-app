@@ -947,9 +947,11 @@ async function sessionsMode () {
     // Lo que el origen dice pedir por otro va SUBORDINADO a él, nunca en su lugar.
     host.innerHTML = lista.map((g) => `<div class="row">
       <div><strong>${esc(g.onBehalfOf || nombre(g.origin))}</strong><br><span class="muted">${g.onBehalfOf ? esc(svt('gr_via')) + ' ' : ''}${esc(g.origin.replace(/^https?:\/\//, ''))}${g.scopes.length ? ' · ' + esc(sesScopeNombres(g.scopes).join(', ')) : ''}<br>${esc(svt('gr_last', sesFecha(g.lastUsed || g.at)))}</span></div>
-      <button class="btn ghost gr-revoke" data-origin="${esc(g.origin)}">${esc(svt('gr_revoke'))}</button></div>`).join('')
+      <button class="btn ghost gr-revoke" data-origin="${esc(g.origin)}" data-on-behalf-of="${esc(g.onBehalfOf || '')}">${esc(svt('gr_revoke'))}</button></div>`).join('')
     host.querySelectorAll('.gr-revoke').forEach((b) => b.addEventListener('click', async () => {
-      try { const { id } = await connectProvider(); await id.revokeGrant(b.getAttribute('data-origin')) } catch (_) {}
+      // Las apps que entran por el puente comparten origen: sin su nombre, retirar no
+      // encontraría la suya (identity ≥ 0.93.0).
+      try { const { id } = await connectProvider(); await id.revokeGrant(b.getAttribute('data-origin'), b.getAttribute('data-on-behalf-of') || undefined) } catch (_) {}
       pintaPermisos(); alerta('ses-grants', svt('gr_revoked'))
     }))
   }
