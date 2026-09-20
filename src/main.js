@@ -69,11 +69,11 @@ async function verifySig(pubkeyStr, data, sigB64) {
 // `appBase()` = prefijo bajo el que se sirve la app (`/` en profile.dotrino.com, o
 // `/<repo>/` en el mirror github.io) para que los enlaces funcionen en ambos.
 function appBase () {
-  let p = location.pathname.replace(/index\.html$/i, '').replace(/(myvault|vault|sessions)\/?$/i, '')
+  let p = location.pathname.replace(/index\.html$/i, '').replace(/(myvault|vault|sessions|create|login)\/?$/i, '')
   if (!p.endsWith('/')) p += '/'
   return p
 }
-function viewUrl (view) { return appBase() + view } // view: '' | 'myvault' | 'vault' | 'sessions'
+function viewUrl (view) { return appBase() + view } // view: '' | 'myvault' | 'vault' | 'sessions' | 'login'
 
 function parseRoute() {
   const h = location.hash.replace(/^#/, '').trim()
@@ -89,6 +89,7 @@ function parseRoute() {
   if (seg === 'myvault' || h === 'myvault') return { mode: 'selfvault', legacy: h === 'myvault' }
   if (seg === 'vault' || h === 'vault') return { mode: 'vault', legacy: h === 'vault' }
   if (seg === 'create') return { mode: 'create' }
+  if (seg === 'login') return { mode: 'login' }
   if (seg === 'sessions' || h === 'sessions') return { mode: 'sessions', legacy: h === 'sessions' }
   // 3) CALIFICAR (#<pubkey> o #p=…) — dato público, se queda como hash.
   if (h) {
@@ -180,6 +181,12 @@ function injectVaultStyles () {
     .cp-field span { font-weight: 600; font-size: 14px; }
     .cp-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border, #d4c4a8); background: var(--bg-1, #fff); color: inherit; font: inherit; }
     .cp-field small { font-size: 12px; }
+    .cp-field input[type="checkbox"] { width: auto; }
+    .lg-check { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0; }
+    .lg-check input { margin-top: 3px; }
+    .lg-check span { font-weight: 600; font-size: 14px; }
+    .lg-other { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--border, #d4c4a8); }
+    .lg-other h2 { font-size: 16px; margin: 0 0 6px; }
     .cp-more { margin: 18px 0; }
     .cp-more summary { cursor: pointer; font-weight: 600; }
     .cp-more > p { margin: 8px 0 4px; font-size: 13px; }
@@ -1241,6 +1248,160 @@ const CREATE_I18N = {
   }
 }
 
+/* ── ENTRAR CON TU CONTRASEÑA (`/login`) ─────────────────────────────────────────────
+ *
+ * La puerta del aparato que se abre con usuario y contraseña: se escribe la dirección de
+ * la cuenta y su contraseña, y este navegador pasa a ser ese aparato. Aquí no hay nada de
+ * criptografía —la conversación entera la hace `@dotrino/identity`, que a su vez usa el
+ * pilar—: esta pantalla pide dos datos, cuenta qué va a pasar y traduce lo que salga mal.
+ *
+ * Se llega desde el botón de perfil de CUALQUIER aplicación (`<dotrino-topbar>`), así que
+ * puede venir con `?return=` para volver a donde se estaba.
+ */
+const LOGIN_I18N = {
+  es: {
+    title: 'Entrar con tu contraseña',
+    lead: 'Escribe la dirección de tu cuenta y su contraseña. Este navegador pasa a ser uno de tus aparatos hasta que salgas.',
+    addr: 'Dirección de tu cuenta', addrPh: 'nombre@AB12-CD34-EF56',
+    addrHelp: 'Te la dio tu bóveda al crear esta entrada. No es secreta: dice dónde está tu cuenta, no quién eres.',
+    pass: 'Contraseña',
+    remember: 'Recordar en este navegador',
+    rememberHelp: 'En un equipo prestado, déjalo sin marcar: al cerrar la pestaña no queda nada. Marcado, esta cuenta se queda aquí hasta que salgas.',
+    enter: 'Entrar', entering: 'Entrando…',
+    otherTitle: 'Con otro aparato tuyo',
+    otherLead: 'Si tienes a mano el teléfono o la computadora donde ya usas tu cuenta, puedes entrar enseñándole un código. Sin contraseñas.',
+    otherGo: 'Entrar con otro aparato',
+    needAddr: 'Escribe la dirección de tu cuenta.',
+    needPass: 'Escribe la contraseña.',
+    badAddress: 'Esa dirección no tiene la forma nombre@AB12-CD34-EF56.',
+    failed: 'La dirección o la contraseña no son correctas.',
+    tooMany: (t) => `Demasiados intentos seguidos. Vuelve a probar en ${t}.`,
+    noVault: 'Ahora mismo no hay ninguna bóveda encendida en esa dirección. Enciéndela y vuelve a intentarlo.',
+    unavailable: 'Esa bóveda no tiene ninguna entrada con contraseña.',
+    badReply: 'Lo que contestó no cuadra con esa dirección, así que no se entró.',
+    other: 'No se pudo entrar: ',
+    done: 'Listo. Ya estás dentro.',
+    mins: (n) => `${n} minuto${n === 1 ? '' : 's'}`,
+    secs: (n) => `${n} segundo${n === 1 ? '' : 's'}`
+  },
+  en: {
+    title: 'Sign in with your password',
+    lead: 'Type your account address and its password. This browser becomes one of your devices until you leave.',
+    addr: 'Your account address', addrPh: 'name@AB12-CD34-EF56',
+    addrHelp: 'Your vault gave it to you when this sign-in was created. It is not a secret: it says where your account is, not who you are.',
+    pass: 'Password',
+    remember: 'Remember on this browser',
+    rememberHelp: 'On a borrowed computer, leave it unchecked: nothing is left behind when you close the tab. Checked, this account stays here until you leave.',
+    enter: 'Sign in', entering: 'Signing in…',
+    otherTitle: 'With another device of yours',
+    otherLead: 'If you have the phone or computer where you already use your account, you can sign in by showing it a code. No passwords.',
+    otherGo: 'Sign in with another device',
+    needAddr: 'Type your account address.',
+    needPass: 'Type the password.',
+    badAddress: 'That address does not look like name@AB12-CD34-EF56.',
+    failed: 'That address or password is not right.',
+    tooMany: (t) => `Too many tries in a row. Try again in ${t}.`,
+    noVault: 'No vault is answering at that address right now. Turn yours on and try again.',
+    unavailable: 'That vault has no password sign-in.',
+    badReply: 'What answered does not match that address, so you were not let in.',
+    other: 'Could not sign in: ',
+    done: 'Done. You are in.',
+    mins: (n) => `${n} minute${n === 1 ? '' : 's'}`,
+    secs: (n) => `${n} second${n === 1 ? '' : 's'}`
+  }
+}
+
+async function loginMode () {
+  injectVaultStyles()
+  const t = LOGIN_I18N[svLang] || LOGIN_I18N.es
+  const returnUrl = new URLSearchParams(location.search).get('return') || ''
+
+  vaultShell(t.title, `<div class="vault-wrap">
+    <p>${esc(t.lead)}</p>
+    <label class="cp-field">
+      <span>${esc(t.addr)}</span>
+      <input id="lg-addr" type="text" inputmode="email" autocapitalize="none" spellcheck="false"
+             placeholder="${esc(t.addrPh)}" autocomplete="username" data-testid="login-address" />
+      <small class="muted">${esc(t.addrHelp)}</small>
+    </label>
+    <label class="cp-field">
+      <span>${esc(t.pass)}</span>
+      <input id="lg-pass" type="password" autocomplete="current-password" data-testid="login-password" />
+    </label>
+    <label class="lg-check">
+      <input id="lg-remember" type="checkbox" data-testid="login-remember" />
+      <span>${esc(t.remember)}<br><small class="muted" style="font-weight:400">${esc(t.rememberHelp)}</small></span>
+    </label>
+    <div class="scanrow">
+      <button id="lg-go" class="btn" data-testid="login-go">${esc(t.enter)}</button>
+    </div>
+    <div id="lg-msg"></div>
+    <div class="lg-other">
+      <h2>${esc(t.otherTitle)}</h2>
+      <p class="muted">${esc(t.otherLead)}</p>
+      <a class="btn ghost" href="${esc(viewUrl('sessions'))}" data-testid="login-sessions">${esc(t.otherGo)}</a>
+    </div>
+  </div>`)
+  wireLangReload()
+
+  const msg = (texto, tipo = 'bad') => { document.getElementById('lg-msg').innerHTML = `<div class="banner ${tipo}">${esc(texto)}</div>` }
+  const campo = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id))
+  campo('lg-addr').focus()
+  campo('lg-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') entrar() })
+  document.getElementById('lg-go').onclick = entrar
+
+  /** «Vuelve a probar en…» en palabras, no en milisegundos. */
+  function espera (ms) {
+    const s = Math.max(1, Math.ceil(ms / 1000))
+    return s >= 60 ? t.mins(Math.ceil(s / 60)) : t.secs(s)
+  }
+
+  /**
+   * Cada fallo se dice por su `code`, no por su frase: los mensajes del pilar están en
+   * inglés y son para quien programa (§8.1). Y se distinguen porque se arreglan de formas
+   * distintas — una contraseña se corrige, una bóveda apagada se enciende, una espera se
+   * espera.
+   */
+  function explicar (e) {
+    switch (e?.code) {
+      case 'login-failed': return t.failed
+      case 'too-many-tries': return t.tooMany(espera(e.waitMs || 60000))
+      case 'no-vault': return t.noVault
+      case 'logins-unavailable': return t.unavailable
+      case 'bad-address': case 'bad-user': return t.badAddress
+      case 'wrong-account': case 'bad-reply': case 'bad-keys': case 'bad-blob': case 'not-a-member': return t.badReply
+      default: return t.other + (e?.message || e)
+    }
+  }
+
+  async function entrar () {
+    const address = campo('lg-addr').value.trim()
+    const password = campo('lg-pass').value
+    if (!address) return msg(t.needAddr)
+    if (!password) return msg(t.needPass)
+    const btn = /** @type {HTMLButtonElement} */ (document.getElementById('lg-go'))
+    btn.disabled = true; btn.textContent = t.entering
+    try {
+      const id = await Identity.connect()
+      await id.loginWithPassword({
+        address, password,
+        remember: campo('lg-remember').checked,
+        // De dónde se entró: es lo que el dueño va a leer en su consola para decidir si
+        // cerrar esta sesión. El nombre del equipo no lo sabe el navegador, así que va la
+        // aplicación desde la que se entró.
+        label: location.hostname
+      })
+      msg(t.done, 'ok')
+      // Recarga de verdad: toda la página tiene que re-abrir con la cuenta nueva.
+      location.href = returnUrl || appBase()
+    } catch (e) {
+      btn.disabled = false; btn.textContent = t.enter
+      campo('lg-pass').value = ''
+      msg(explicar(e))
+    }
+  }
+}
+
 async function createProfileMode () {
   injectVaultStyles()
   const t = CREATE_I18N[svLang] || CREATE_I18N.es
@@ -1300,6 +1461,7 @@ async function main() {
   const data = parseRoute()
 
   if (data.mode === 'create') return createProfileMode()
+  if (data.mode === 'login') return loginMode()
   if (data.mode === 'vault' || data.mode === 'selfvault' || data.token) return redirectToConsole(data)
 
   let pendingPair = false

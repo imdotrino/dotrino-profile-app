@@ -11,11 +11,11 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@dotrino/identity": "0.93.0",
+    "@dotrino/identity": "0.96.1",
     "@dotrino/profile": "0.19.0",
     "@dotrino/proxy-client": "0.18.2",
     "@dotrino/reputation": "0.11.0",
-    "@dotrino/topbar": "0.9.1",
+    "@dotrino/topbar": "0.11.0",
     "jsqr": "1.4.0",
     "qrcode-generator": "1.4.4"
   },
