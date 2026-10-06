@@ -11,8 +11,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@dotrino/identity": "0.96.1",
-    "@dotrino/profile": "0.19.0",
+    "@dotrino/identity": "0.108.0",
+    "@dotrino/profile": "0.20.0",
     "@dotrino/proxy-client": "0.18.2",
     "@dotrino/reputation": "0.11.0",
     "@dotrino/store": "0.11.0",
