@@ -16,7 +16,7 @@
     "@dotrino/proxy-client": "0.30.3",
     "@dotrino/reputation": "0.11.0",
     "@dotrino/store": "0.11.0",
-    "@dotrino/topbar": "0.12.1",
+    "@dotrino/topbar": "0.16.1",
     "jsqr": "1.4.0",
     "qrcode-generator": "1.4.4"
   },
