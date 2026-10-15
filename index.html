@@ -8,32 +8,23 @@
     <link rel="icon" href="/images/imagoWBG.png" />
     <title>Perfil — Dotrino</title>
     <style>
-      :root { color-scheme: light; }
       * { box-sizing: border-box; }
       body {
         margin: 0; min-height: 100vh;
-        font-family: 'Quicksand', system-ui, -apple-system, Segoe UI, sans-serif;
-        background: #f4f7f9; color: #181c1e;
+        font-family: var(--dt-font);
+        background: var(--dt-bg); color: var(--dt-text);
         display: flex; align-items: center; justify-content: center;
       }
       #app { width: 100%; display: flex; align-items: center; justify-content: center; padding: 1rem; }
-      .state { text-align: center; color: #4a5560; max-width: 28rem; padding: 2rem; }
-      .state h1 { font-size: 1.2rem; color: #181c1e; margin: 0 0 .5rem; }
-      .state a { color: #00658c; }
+      .state { text-align: center; color: var(--dt-text-dim); max-width: 28rem; padding: 2rem; }
+      .state h1 { font-size: 1.2rem; color: var(--dt-text); margin: 0 0 .5rem; }
+      .state a { color: var(--dt-accent); }
       /* Vista de validación (#v=): banner de firma + contenido + perfil/reputación. */
       .validate-wrap { max-width: 30rem; width: 100%; display: flex; flex-direction: column; gap: 1rem; padding: 1.2rem; }
       .banner { border-radius: 16px; padding: 1rem 1.2rem; font-weight: 600; font-size: 1.05rem; }
-      .banner.ok { background: #e6f4ea; color: #1a7a3a; border: 1px solid #b6e0c2; }
-      .banner.bad { background: #fdecea; color: #b3261e; border: 1px solid #f3c0bb; }
-      .content { background: #fff; border: 1px solid #e3e9ed; border-radius: 16px; padding: 1rem 1.2rem; white-space: pre-wrap; color: #181c1e; box-shadow: 0 10px 30px rgba(74,85,96,.05); }
-      /* Tema claro Cool & Cozy para el <dotrino-profile> (mismas vars --ccp-* del home). */
-      dotrino-profile {
-        --ccp-bg: #ffffff; --ccp-bg-2: #f4f7f9; --ccp-bg-3: #eaeff3; --ccp-bg-4: #e3e9ed;
-        --ccp-border: #cfd8de; --ccp-text: #181c1e; --ccp-muted: #4a5560;
-        --ccp-accent: #00658c; --ccp-accent-2: #00506f; --ccp-accent-text: #ffffff;
-        --ccp-gold: #c98a00; --ccp-derived: #b07f00; --ccp-online: #00897b;
-        --ccp-affinity: #2f8fd6; --ccp-input-bg: #f1f4f6; --ccp-radius: 16px;
-      }
+      .banner.ok { background: var(--dt-mint-soft); color: var(--dt-ok); border: 1px solid var(--dt-mint); }
+      .banner.bad { background: var(--dt-error-soft); color: var(--dt-error); border: 1px solid var(--dt-error); }
+      .content { background: var(--dt-surface); border: 1px solid var(--dt-line-soft); border-radius: 16px; padding: 1rem 1.2rem; white-space: pre-wrap; color: var(--dt-text); box-shadow: var(--dt-shadow); }
     </style>
   <!-- PWA (CONVENCIONES §3): manifiesto, tema e iconos de pantalla de inicio. -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -48,7 +39,7 @@
       <div class="state"><p>Cargando perfil…</p></div>
     </div>
     <!-- Moneda de support del ecosistema (CONVENCIONES §6, Web Component @0.6). -->
-    <script type="module" src="https://cdn.jsdelivr.net/npm/@dotrino/support@0.6/src/index.js"></script>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@dotrino/support@0.9/src/index.js"></script>
     <script type="module" src="/src/main.js"></script>
   <script>
     // Registro del service worker (§3): la app queda disponible sin conexión.

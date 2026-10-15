@@ -25,6 +25,7 @@ import { keyLabel } from '@dotrino/identity/keyid'
 import { verifySession, cleanSessionScopes } from '@dotrino/identity/session'
 import { openSession, grantSession, denySession, closeSession, parseInvite, sessionCode } from '@dotrino/identity/session-flow'
 import { WebSocketProxyClient, makeEncKeypair } from '@dotrino/proxy-client'
+import '@dotrino/theme/theme.css'
 
 const mount = document.getElementById('app')
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -131,85 +132,82 @@ function injectVaultStyles () {
   const s = document.createElement('style'); s.id = 'vault-css'
   s.textContent = `
     .vault-wrap { max-width: 560px; margin: 0 auto; text-align: left; }
-    .vault-wrap textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 13px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; resize: vertical; }
-    .vault-wrap .btn { display: inline-block; margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 999px; background: #1a73e8; color: #fff; font-size: 15px; cursor: pointer; }
+    .vault-wrap textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 13px; padding: 10px; border: 1px solid var(--dt-line); border-radius: 8px; resize: vertical; }
+    .vault-wrap .btn { display: inline-block; margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 999px; background: var(--dt-accent); color: var(--dt-accent-ink); font-size: 15px; cursor: pointer; }
     .vault-wrap .btn[disabled] { opacity: .5; cursor: default; }
-    .vault-wrap .btn.danger { background: #d93025; }
-    .vault-wrap .banner { margin: 14px 0; padding: 10px 14px; border-radius: 8px; background: #eef2ff; }
-    .vault-wrap .banner.ok { background: #e6f4ea; color: #137333; }
-    .vault-wrap .banner.bad { background: #fce8e6; color: #c5221f; }
-    .vault-wrap .sas-box { margin: 16px 0; padding: 16px; border: 2px solid #1a73e8; border-radius: 12px; text-align: center; }
+    .vault-wrap .btn.danger { background: var(--dt-error); }
+    .vault-wrap .banner { margin: 14px 0; padding: 10px 14px; border-radius: 8px; background: var(--dt-accent-tint); }
+    .vault-wrap .banner.ok { background: var(--dt-mint-soft); color: var(--dt-ok); }
+    .vault-wrap .banner.bad { background: var(--dt-error-soft); color: var(--dt-error); }
+    .vault-wrap .sas-box { margin: 16px 0; padding: 16px; border: 2px solid var(--dt-accent); border-radius: 12px; text-align: center; }
     .vault-wrap .sas-box .sas { font-size: 40px; letter-spacing: 8px; font-weight: 700; font-family: ui-monospace, monospace; margin: 8px 0; }
-    .vault-wrap .muted { color: #777; font-size: 13px; }
+    .vault-wrap .muted { color: var(--dt-text-faint); font-size: 13px; }
     .vault-wrap .vault-info { list-style: none; padding: 0; }
     .vault-wrap .vault-info li { padding: 4px 0; }
-    .vault-wrap .btn.ghost { background: #eef2ff; color: #1a73e8; }
+    .vault-wrap .btn.ghost { background: var(--dt-accent-tint); color: var(--dt-accent); }
     .vault-wrap .scanrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .vault-wrap .scanbox video { width: 100%; max-width: 360px; border-radius: 10px; background: #000; display: block; margin: 8px 0; }
-    .vault-wrap details > summary { cursor: pointer; margin-top: 10px; color: #777; }
+    .vault-wrap details > summary { cursor: pointer; margin-top: 10px; color: var(--dt-text-faint); }
     /* Barra superior estándar del ecosistema: <dotrino-topbar> (@dotrino/topbar),
-       tematizada en CLARO para esta página. La marca a medida va por slot. */
+       con los colores del tema. La marca a medida va por slot. */
     #app:has(.vault-page) { padding: 0; align-items: stretch; }
     .vault-page { width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
     .vault-topbar {
       position: sticky; top: 0; z-index: 50;
-      --dotrino-topbar-bg: #fff; --dotrino-topbar-border: #e3e9ed;
-      --dotrino-topbar-text: #181c1e; --dotrino-topbar-muted: #4a5560;
-      --dotrino-topbar-accent: #00658c;
     }
     .vault-page .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .vault-page .brand-logo { width: 36px; height: 36px; border-radius: 9px; }
     .vault-page .brand-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
-    .vault-page .brand-name { font-weight: 700; font-size: 1.15rem; color: #181c1e; }
-    .vault-page .brand-tag { font-size: .72rem; color: #4a5560; }
+    .vault-page .brand-name { font-weight: 700; font-size: 1.15rem; color: var(--dt-text); }
+    .vault-page .brand-tag { font-size: .72rem; color: var(--dt-text-dim); }
     .vault-page .vault-main { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 1.2rem 1rem; }
     .vault-page .vault-card { max-width: 560px; width: 100%; text-align: left; }
-    .vault-page .vault-card h1 { font-size: 1.3rem; color: #181c1e; margin: 0 0 1rem; }
+    .vault-page .vault-card h1 { font-size: 1.3rem; color: var(--dt-text); margin: 0 0 1rem; }
     /* Sección de PIN (inline en la página, no popup) */
-    .pin-box { margin-top: 1.2rem; padding: 1rem 1.1rem; border: 1px solid #e3e9ed; border-radius: 14px; background: #fff; }
+    .pin-box { margin-top: 1.2rem; padding: 1rem 1.1rem; border: 1px solid var(--dt-line-soft); border-radius: 14px; background: var(--dt-surface); }
     .pin-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .pin-title { font-weight: 700; color: #181c1e; }
-    .pin-box .btn { display: inline-flex; align-items: center; padding: 9px 14px; border: 0; border-radius: 999px; background: #1a73e8; color: #fff; font-size: 14px; cursor: pointer; }
-    .pin-box .btn.ghost { background: #eef2ff; color: #1a73e8; }
-    .pin-box .btn.danger { background: #d93025; color: #fff; }
+    .pin-title { font-weight: 700; color: var(--dt-text); }
+    .pin-box .btn { display: inline-flex; align-items: center; padding: 9px 14px; border: 0; border-radius: 999px; background: var(--dt-accent); color: var(--dt-accent-ink); font-size: 14px; cursor: pointer; }
+    .pin-box .btn.ghost { background: var(--dt-accent-tint); color: var(--dt-accent); }
+    .pin-box .btn.danger { background: var(--dt-error); color: var(--dt-accent-ink); }
     .pin-box .btn[disabled] { opacity: .5; cursor: default; }
     .pf-nameform, .pf-confirm { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-    .pf-nameform input { flex: 1 1 auto; padding: 9px 11px; border: 1px solid #cfd8de; border-radius: 8px; font-size: 14px; }
-    .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: #b3261e; }
+    .pf-nameform input { flex: 1 1 auto; padding: 9px 11px; border: 1px solid var(--dt-line); border-radius: 8px; font-size: 14px; }
+    .pf-confirm span { flex: 1 1 100%; font-size: .85rem; color: var(--dt-error); }
     /* ── /create: crear un perfil ── */
     .cp-field { display: flex; flex-direction: column; gap: 4px; margin: 14px 0; }
     .cp-field span { font-weight: 600; font-size: 14px; }
-    .cp-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border, #d4c4a8); background: var(--bg-1, #fff); color: inherit; font: inherit; }
+    .cp-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border, var(--dt-line)); background: var(--bg-1, #fff); color: inherit; font: inherit; }
     .cp-field small { font-size: 12px; }
     .cp-field input[type="checkbox"] { width: auto; }
     .lg-check { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0; }
     .lg-check input { margin-top: 3px; }
     .lg-check span { font-weight: 600; font-size: 14px; }
-    .lg-other { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--border, #d4c4a8); }
+    .lg-other { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--border, var(--dt-line)); }
     .lg-other h2 { font-size: 16px; margin: 0 0 6px; }
     .cp-more { margin: 18px 0; }
     .cp-more summary { cursor: pointer; font-weight: 600; }
     .cp-more > p { margin: 8px 0 4px; font-size: 13px; }
 
     /* ── Self-vault (#myvault): este dispositivo ES la bóveda ── */
-    .sv-status { display: inline-block; margin: 4px 0 12px; font-size: .82rem; color: #137333; }
-    .sv-status.bad { color: #b3261e; }
+    .sv-status { display: inline-block; margin: 4px 0 12px; font-size: .82rem; color: var(--dt-ok); }
+    .sv-status.bad { color: var(--dt-error); }
     .sv-block { margin: 14px 0; }
-    .sv-setup { background: #f4f7f9; border: 1px solid #e3e9ed; border-radius: 12px; padding: 14px; }
+    .sv-setup { background: var(--dt-bg); border: 1px solid var(--dt-line-soft); border-radius: 12px; padding: 14px; }
     .sv-setup pre, .sv-qr-code pre { background: #0e1116; color: #7dd3fc; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: .78rem; word-break: break-all; margin: 8px 0; }
-    .sv-qr-wrap { background: #fff; padding: 10px; border-radius: 10px; display: inline-block; margin: 8px 0; border: 1px solid #e3e9ed; }
+    .sv-qr-wrap { background: var(--dt-surface); padding: 10px; border-radius: 10px; display: inline-block; margin: 8px 0; border: 1px solid var(--dt-line-soft); }
     .sv-qr-wrap svg { width: 200px; height: 200px; display: block; }
-    .sv-pending { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #cfd8de; }
+    .sv-pending { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--dt-line); }
     .sv-pair-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .sv-code-input { flex: 1 1 120px; background: #fff; color: #181c1e; border: 1px solid #cfd8de; border-radius: 10px; padding: 10px 12px; font-size: 1.1rem; letter-spacing: 2px; }
+    .sv-code-input { flex: 1 1 120px; background: var(--dt-surface); color: var(--dt-text); border: 1px solid var(--dt-line); border-radius: 10px; padding: 10px 12px; font-size: 1.1rem; letter-spacing: 2px; }
     .sv-machine-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-    .sv-machine-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f4f7f9; border: 1px solid #e3e9ed; border-radius: 10px; padding: 10px 14px; }
+    .sv-machine-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--dt-bg); border: 1px solid var(--dt-line-soft); border-radius: 10px; padding: 10px 14px; }
     .sv-machine-name { word-break: break-all; display: inline-flex; align-items: center; gap: 8px; }
-    .sv-mdot { width: 9px; height: 9px; border-radius: 50%; background: #cfd8de; display: inline-block; flex: none; }
-    .sv-mdot.on { background: #34a853; } .sv-mdot.off { background: #ea4335; }
+    .sv-mdot { width: 9px; height: 9px; border-radius: 50%; background: var(--dt-line); display: inline-block; flex: none; }
+    .sv-mdot.on { background: var(--dt-ok); } .sv-mdot.off { background: var(--dt-error); }
     .sv-link-row { margin-top: 14px; }
-    .sv-link-row a { color: #00658c; font-weight: 600; text-decoration: none; }
-    .sv-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; padding: 12px 14px; border: 1px solid #e3e9ed; border-radius: 12px; background: #fff; }`
+    .sv-link-row a { color: var(--dt-accent); font-weight: 600; text-decoration: none; }
+    .sv-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; padding: 12px 14px; border: 1px solid var(--dt-line-soft); border-radius: 12px; background: var(--dt-surface); }`
   document.head.appendChild(s)
 }
 
@@ -272,7 +270,7 @@ function scanWithCamera (host) {
 function vaultShell (title, inner, tag = svt('tag_identity')) {
   mount.innerHTML = `<div class="vault-page">
     <dotrino-topbar class="vault-topbar" brand-href="https://dotrino.com/"
-      support-repo="imdotrino/dotrino-profile-app" support-discord="https://discord.gg/D648uq7cth" profile>
+      support-repo="imdotrino/dotrino-profile-app" support-discord="https://discord.gg/D648uq7cth" profile theme>
       <div slot="brand" class="brand"><img class="brand-logo" src="/images/imagoWBG.png" alt="" /><div class="brand-text"><span class="brand-name">Dotrino</span><span class="brand-tag">${esc(tag)}</span></div></div>
     </dotrino-topbar>
     <main class="vault-main"><div class="vault-card">${title ? `<h1>${esc(title)}</h1>` : ''}${inner}</div></main>
@@ -1066,7 +1064,7 @@ async function selfVaultMode () {
   let id
   try { id = await Identity.connect() } catch {}
   if (!id?.me?.publickey) {
-    root.innerHTML = `<p class="status">${esc(svt('need_id'))} <a href="${viewUrl('')}" style="color:#00658c">${esc(svt('need_id_link'))}</a>.</p>`
+    root.innerHTML = `<p class="status">${esc(svt('need_id'))} <a href="${viewUrl('')}" style="color:var(--dt-accent)">${esc(svt('need_id_link'))}</a>.</p>`
     return
   }
 
