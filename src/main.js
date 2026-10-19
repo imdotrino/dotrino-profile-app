@@ -14,7 +14,7 @@
  */
 import { Identity, verifyDeviceSig } from '@dotrino/identity'
 import { avatarDataUri } from '@dotrino/identity/capabilities'
-import { createVaultReputation, canonicalStringify } from '@dotrino/reputation'
+import { createVaultReputation } from '@dotrino/reputation'
 import { createVaultProfileProvider } from '@dotrino/profile'
 import '@dotrino/profile' // registra el custom element <dotrino-profile>
 import '@dotrino/topbar'  // barra superior estándar (marca+volver+idioma+perfil+support)
@@ -197,14 +197,6 @@ function injectVaultStyles () {
   document.head.appendChild(s)
 }
 
-async function vaultFingerprint (jwkStr) {
-  try {
-    const jwk = JSON.parse(jwkStr)
-    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalStringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })))
-    return [...new Uint8Array(h)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('')
-  } catch { return '????????' }
-}
-
 // Extrae el objeto de emparejamiento de un texto: URL profile.dotrino.com/#vault=… o JSON crudo.
 function extractPayload (text) {
   if (!text) return null
@@ -330,7 +322,7 @@ async function vaultMode (prefillQr) {
   const expired = status.paired && status.exp && status.exp <= Date.now()
 
   if (status.paired && !expired) {
-    const fp = await vaultFingerprint(status.master)
+    const fp = await keyLabel(status.master)
     vaultShell(svt('v_title'), `<div class="vault-wrap">
       <div class="banner ok">${svt('v_connected_ok')}</div>
       <ul class="vault-info">
@@ -931,7 +923,7 @@ async function sessionsMode () {
       })
       // La HUELLA legible (AB12-CD34), no el JWK crudo: al usuario hay que enseñarle en qué
       // cuenta entró, no una llave.
-      const fingerprint = await keyLabel(s.profileId).catch(() => null)
+      const fingerprint = await keyLabel(s.profileId)
       sesSave(SES_LS, { paper: s.paper, chain: s.chain, name: fingerprint, privateJwk: sessionKey.privateJwk })
       box.innerHTML = `<button class="btn" id="ses-open" data-testid="ses-open">${esc(svt('ses_open'))}</button>`
       document.getElementById('ses-open')?.addEventListener('click', enter)
