@@ -12,14 +12,14 @@
  * Reutiliza @dotrino/identity + @dotrino/profile + @dotrino/reputation. La
  * verificación es client-side (solo necesita la clave PÚBLICA, que va en el link).
  */
-import { Identity } from '@dotrino/identity'
+import { Identity, verifyDeviceSig } from '@dotrino/identity'
 import { avatarDataUri } from '@dotrino/identity/capabilities'
 import { createVaultReputation, canonicalStringify } from '@dotrino/reputation'
 import { createVaultProfileProvider } from '@dotrino/profile'
 import '@dotrino/profile' // registra el custom element <dotrino-profile>
 import '@dotrino/topbar'  // barra superior estándar (marca+volver+idioma+perfil+support)
-import jsQR from 'jsqr' // lector de QR client-side (misma lib que dotrino-qrreader)
-import { qrSvg } from './qr.js' // generador de QR como SVG (emparejamiento self-vault)
+import { scanImageFile } from '@dotrino/qr' // el QR del ecosistema: <dotrino-qr-scan> y leer una foto
+import { qrSvg } from '@dotrino/qr/svg' // el QR como SVG (emparejamiento self-vault, sesiones)
 import { makeDeviceKey, signWithDevice } from '@dotrino/identity/capabilities'
 import { keyLabel } from '@dotrino/identity/keyid'
 import { verifySession, cleanSessionScopes } from '@dotrino/identity/session'
@@ -44,19 +44,6 @@ function b64urlDecode(s) {
 function b64urlEncode(str) {
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(str)))
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-/* ── verificación de firma — MISMO esquema que el vault (ECDSA P-256 + SHA-256
-   sobre canonicalStringify, firma = base64 de r||s crudos). Solo clave pública. */
-const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }
-const SIGN = { name: 'ECDSA', hash: { name: 'SHA-256' } }
-const b64ToBuf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer
-async function verifySig(pubkeyStr, data, sigB64) {
-  if (!pubkeyStr || !sigB64) return false
-  try {
-    const pub = await crypto.subtle.importKey('jwk', JSON.parse(pubkeyStr), ECDSA, true, ['verify'])
-    return await crypto.subtle.verify(SIGN, pub, b64ToBuf(sigB64), new TextEncoder().encode(canonicalStringify(data)))
-  } catch { return false }
 }
 
 // Enrutado: las VISTAS van por PATH — `/` (tu perfil), `/myvault` (tu bóveda),
@@ -146,7 +133,6 @@ function injectVaultStyles () {
     .vault-wrap .vault-info li { padding: 4px 0; }
     .vault-wrap .btn.ghost { background: var(--dt-accent-tint); color: var(--dt-accent); }
     .vault-wrap .scanrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .vault-wrap .scanbox video { width: 100%; max-width: 360px; border-radius: 10px; background: #000; display: block; margin: 8px 0; }
     .vault-wrap details > summary { cursor: pointer; margin-top: 10px; color: var(--dt-text-faint); }
     /* Barra superior estándar del ecosistema: <dotrino-topbar> (@dotrino/topbar),
        con los colores del tema. La marca a medida va por slot. */
@@ -228,42 +214,17 @@ function extractPayload (text) {
   try { const o = JSON.parse(text); return (o && o.iss && o.token) ? o : null } catch { return null }
 }
 
-// Decodifica un QR desde una imagen (archivo). Devuelve el texto o null.
-function decodeQrFromImage (file) {
+// Lee un QR con el lector del ecosistema (<dotrino-qr-scan>, @dotrino/qr): cámara, o una
+// foto cuando no hay cámara. Devuelve el texto, o null si el usuario cierra.
+function scanQr () {
   return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight
-      try { const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0); const d = ctx.getImageData(0, 0, c.width, c.height); resolve(jsQR(d.data, d.width, d.height)?.data || null) }
-      catch { resolve(null) }
-      URL.revokeObjectURL(img.src)
-    }
-    img.onerror = () => resolve(null)
-    img.src = URL.createObjectURL(file)
-  })
-}
-
-// Escáner con cámara: muestra el video en `host`, devuelve el texto del QR (o null si cancelan/falla).
-function scanWithCamera (host) {
-  return new Promise((resolve) => {
-    let stream = null, raf = null, done = false
-    const stop = (val) => { if (done) return; done = true; if (raf) cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t => t.stop()); host.innerHTML = ''; resolve(val) }
-    host.innerHTML = `<div class="scanbox"><video playsinline muted></video><div><button id="scancancel" class="btn ghost">${esc(svt('cancel'))}</button></div></div>`
-    const video = host.querySelector('video')
-    host.querySelector('#scancancel').onclick = () => stop(null)
-    const c = document.createElement('canvas'); const ctx = c.getContext('2d')
-    const tick = () => {
-      if (done) return
-      if (video.readyState >= 2 && video.videoWidth) {
-        c.width = video.videoWidth; c.height = video.videoHeight; ctx.drawImage(video, 0, 0, c.width, c.height)
-        try { const d = ctx.getImageData(0, 0, c.width, c.height); const r = jsQR(d.data, d.width, d.height); if (r?.data) return stop(r.data) } catch {}
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then((s) => { stream = s; video.srcObject = s; return video.play().catch(() => {}) })
-      .then(() => { raf = requestAnimationFrame(tick) })
-      .catch(() => { host.innerHTML = `<div class="banner bad">${esc(svt('cam_err'))}</div>`; resolve(null) })
+    const scan = document.createElement('dotrino-qr-scan')
+    scan.setAttribute('lang', svLang === 'en' ? 'en' : 'es')
+    const done = (text) => { scan.open = false; scan.remove(); resolve(text) }
+    scan.addEventListener('dotrino-qr-scanned', (e) => done(e.detail?.text || null))
+    scan.addEventListener('dotrino-qr-cancelled', () => done(null))
+    document.body.appendChild(scan)
+    scan.open = true
   })
 }
 
@@ -411,7 +372,6 @@ async function vaultMode (prefillQr) {
       <button id="openfile" class="btn ghost">${svt('v_openfile')}</button>
     </div>
     <input id="fileinput" type="file" accept="image/*,.dpair,.json,text/plain" style="display:none">
-    <div id="scanarea"></div>
     <details><summary>${svt('v_paste_toggle')}</summary>
       <textarea id="qr" rows="3" placeholder='{"v":2,"iss":"…","proxy":"…","token":"…","sn":"…"}'></textarea>
       <div><button id="connect" class="btn ghost">${svt('v_connect_pasted')}</button></div>
@@ -461,12 +421,12 @@ async function vaultMode (prefillQr) {
       // Esa bóveda ya vive en OTRA cuenta de este aparato: no se duplica, se te lleva a
       // ella. Por `code` y no por el texto del error (que se traduce y cambia).
       if (e?.code === 'ALREADY_PAIRED') {
-        const otra = e.detail?.profile
+        const otherProfile = e.detail?.profile
         msg().innerHTML = `<div class="banner">${svt('v_already_paired', esc(e.detail?.name || ''))}</div>
           <div><button class="btn" id="go-other">${svt('v_already_paired_go')}</button></div>`
         msg().querySelector('#go-other').onclick = async () => {
           // Cambiar de cuenta no es reactivo (por diseño): se recarga para entrar con ella.
-          try { await id.switchProfile(otra); location.reload() }
+          try { await id.switchProfile(otherProfile); location.reload() }
           catch (err) { msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(err.message))}</div>` }
         }
         return
@@ -480,14 +440,14 @@ async function vaultMode (prefillQr) {
     catch { msg().innerHTML = `<div class="banner bad">${svt('v_pasted_invalid')}</div>` }
   }
   document.getElementById('scan').onclick = async () => {
-    const text = await scanWithCamera(document.getElementById('scanarea'))
+    const text = await scanQr()
     if (text) doConnect(extractPayload(text))
   }
   document.getElementById('openfile').onclick = () => document.getElementById('fileinput').click()
   document.getElementById('fileinput').onchange = async (ev) => {
     const f = ev.target.files?.[0]; if (!f) return
     let text
-    if (/^image\//.test(f.type)) { text = await decodeQrFromImage(f); if (!text) { msg().innerHTML = `<div class="banner bad">${svt('v_no_qr_img')}</div>`; return } }
+    if (/^image\//.test(f.type)) { text = await scanImageFile(f); if (!text) { msg().innerHTML = `<div class="banner bad">${svt('v_no_qr_img')}</div>`; return } }
     else { text = await f.text() }
     doConnect(extractPayload(text))
   }
@@ -566,7 +526,6 @@ const SV_I18N = {
     v_pasted_invalid: 'Ese código pegado no es válido.',
     v_no_qr_img: 'No encontré un QR en esa imagen.',
     // --- Cámara / escáner ---
-    cam_err: 'No se pudo abrir la cámara. Prueba «Abrir imagen/archivo» o pega el código.',
     // --- Validar firma (#v=) ---
     val_ok: '✓ Firma válida',
     val_ok_by: (n) => ` — firmado por <strong>${n}</strong>`,
@@ -688,7 +647,6 @@ const SV_I18N = {
     v_pasted_invalid: 'That pasted code is not valid.',
     v_no_qr_img: 'I could not find a QR in that image.',
     // --- Camera / scanner ---
-    cam_err: 'Could not open the camera. Try «Open image/file» or paste the code.',
     // --- Signature validation (#v=) ---
     val_ok: '✓ Valid signature',
     val_ok_by: (n) => ` — signed by <strong>${n}</strong>`,
@@ -790,14 +748,14 @@ const sesSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } c
  * navegador que entra todavía NO tiene identidad —eso es lo que viene a conseguir—, así
  * que no hay store al que escribir. Y lo que se guarda vence solo.
  */
-function sesFecha (ms) {
+function sesFormatDate (ms) {
   try { return new Date(ms).toLocaleString(svLang === 'en' ? 'en-US' : 'es-ES', { dateStyle: 'short', timeStyle: 'short' }) }
   catch (_) { return String(ms) }
 }
 
-const sesScopeTexto = (sc) => sc.map((x) => x === 'vault:store' ? svt('ses_scope_store') : svt('ses_scope_whoami'))
+const sesScopeLabels = (sc) => sc.map((x) => x === 'vault:store' ? svt('ses_scope_store') : svt('ses_scope_whoami'))
 /** Los alcances del PERMISO (datos del perfil), en palabras. */
-const sesScopeNombres = (sc) => (sc || []).map((x) => ({
+const sesGrantScopeLabels = (sc) => (sc || []).map((x) => ({
   'profile:name': svt('gr_name'), 'profile:avatar': svt('gr_avatar'),
   'profile:email': svt('gr_email'), 'profile:social': svt('gr_links'), 'id:whoami': svt('ses_scope_whoami')
 })[x] || x)
@@ -810,7 +768,7 @@ const sesScopeNombres = (sc) => (sc || []).map((x) => ({
  * puntas están en el mismo navegador— acaba compartiendo pubkey con quien espera, así que
  * el papel nunca llegaba a su destino.
  */
-async function sesTransporteIdentidad (id) {
+async function sesIdentityTransport (id) {
   const client = new WebSocketProxyClient({ url: 'wss://proxy.dotrino.com', autoReconnect: true })
   await client.connect()
   const pub = (await id.currentProfile?.().catch(() => null))?.pubkey || id.me.publickey
@@ -825,12 +783,12 @@ async function sesTransporteIdentidad (id) {
  * cifra, CONVENCIONES §4.1) y sin la privada aquí el cliente del pilar no puede abrir el
  * sobre y lo descarta en silencio — la pantalla se queda esperando algo que ya llegó.
  */
-async function sesTransporte (llave, encPrivateKey = null) {
+async function sesTransport (sessionKey, encPrivateKey = null) {
   const client = new WebSocketProxyClient({ url: 'wss://proxy.dotrino.com', autoReconnect: true, myEncPrivateKey: encPrivateKey })
   await client.connect()
   await client.identifyAs({
-    publickey: llave.publickey,
-    sign: (d) => signWithDevice({ privateJwk: llave.privateJwk, data: d })
+    publickey: sessionKey.publickey,
+    sign: (d) => signWithDevice({ privateJwk: sessionKey.privateJwk, data: d })
   })
   return client
 }
@@ -843,93 +801,76 @@ async function sessionsMode () {
     <div class="card"><h3>${esc(svt('ses_open'))}</h3><p class="muted">${esc(svt('ses_open_desc'))}</p>
       <div id="ses-open-box"><button class="btn" id="ses-open" data-testid="ses-open">${esc(svt('ses_open'))}</button></div></div>
     <div class="card"><h3>${esc(svt('ses_grant'))}</h3><p class="muted">${esc(svt('ses_grant_desc'))}</p>
-      <div id="ses-grant-box">
-        <button class="btn ghost" id="ses-scan" data-testid="ses-scan">📷</button>
-        <div style="margin-top:8px"><input id="ses-paste" data-testid="ses-paste" placeholder="${esc(svt('ses_paste'))}" style="width:100%">
-        <button class="btn ghost" id="ses-read" data-testid="ses-read" style="margin-top:6px">${esc(svt('ses_read'))}</button></div>
-      </div></div>
+      <div id="ses-grant-box"></div></div>
     <div class="card"><h3>${esc(svt('ses_given'))}</h3><div id="ses-given"></div></div>
     <div class="card"><h3>${esc(svt('gr_title'))}</h3><p class="muted">${esc(svt('gr_desc'))}</p><div id="ses-grants"></div></div>`, svt('tag_sessions'))
   wireLangReload()   // el botón de perfil ya lo decora `vaultShell`
 
-  pintaMia()
-  pintaDadas()
-  pintaPermisos()
+  renderMine()
+  renderGiven()
+  renderGrants()
+  renderGrantBox()
 
-  document.getElementById('ses-open')?.addEventListener('click', entrar)
-  document.getElementById('ses-read')?.addEventListener('click', () => {
-    const t = /** @type {HTMLInputElement} */ (document.getElementById('ses-paste'))?.value || ''
-    const inv = parseInvite(extractPayload(t) || t)
-    if (!inv) return alerta('ses-grant-box', svt('v_pasted_invalid'), 'bad')
-    pedirPermiso(inv)
-  })
-  document.getElementById('ses-scan')?.addEventListener('click', async () => {
-    const box = document.getElementById('ses-grant-box')
-    const leido = await scanWithCamera(box)
-    if (!leido) return pintaGrantBox()
-    const inv = parseInvite(extractPayload(leido) || leido)
-    pintaGrantBox()
-    if (!inv) return alerta('ses-grant-box', svt('v_pasted_invalid'), 'bad')
-    pedirPermiso(inv)
-  })
-
-  function alerta (donde, texto, tipo = 'ok') {
-    const host = document.getElementById(donde); if (!host) return
-    const b = document.createElement('div'); b.className = 'banner ' + tipo; b.textContent = texto
+  document.getElementById('ses-open')?.addEventListener('click', enter)
+  function flash (where, message, kind = 'ok') {
+    const host = document.getElementById(where); if (!host) return
+    const b = document.createElement('div'); b.className = 'banner ' + kind; b.textContent = message
     host.appendChild(b); setTimeout(() => b.remove(), 4000)
   }
 
-  function pintaGrantBox () {
+  /** El cajón de «dejar entrar»: pegar el código o leerlo con la cámara. */
+  function renderGrantBox () {
     const box = document.getElementById('ses-grant-box'); if (!box) return
     box.innerHTML = `<button class="btn ghost" id="ses-scan" data-testid="ses-scan">📷</button>
       <div style="margin-top:8px"><input id="ses-paste" data-testid="ses-paste" placeholder="${esc(svt('ses_paste'))}" style="width:100%">
       <button class="btn ghost" id="ses-read" data-testid="ses-read" style="margin-top:6px">${esc(svt('ses_read'))}</button></div>`
+    const readInvite = (text) => {
+      const inv = parseInvite(extractPayload(text) || text)
+      if (!inv) return flash('ses-grant-box', svt('v_pasted_invalid'), 'bad')
+      askPermission(inv)
+    }
     document.getElementById('ses-read')?.addEventListener('click', () => {
-      const t = /** @type {HTMLInputElement} */ (document.getElementById('ses-paste'))?.value || ''
-      const inv = parseInvite(extractPayload(t) || t)
-      if (!inv) return alerta('ses-grant-box', svt('v_pasted_invalid'), 'bad')
-      pedirPermiso(inv)
+      readInvite(/** @type {HTMLInputElement} */ (document.getElementById('ses-paste'))?.value || '')
     })
     document.getElementById('ses-scan')?.addEventListener('click', async () => {
-      const leido = await scanWithCamera(document.getElementById('ses-grant-box'))
-      pintaGrantBox()
-      if (leido) { const inv = parseInvite(extractPayload(leido) || leido); if (inv) pedirPermiso(inv) }
+      const scanned = await scanQr()
+      if (scanned) readInvite(scanned)
     })
   }
 
   /** La sesión de ESTE navegador, si entramos aquí. */
-  function pintaMia () {
+  function renderMine () {
     const host = document.getElementById('ses-mine'); if (!host) return
-    const mia = sesLoad(SES_LS)
-    if (!mia?.paper || mia.paper.exp <= Date.now()) { host.innerHTML = ''; return }
-    host.innerHTML = `<div class="banner ok">${svt('ses_in', esc(mia.name || mia.paper.sid.slice(0, 8)))} · ${esc(svt('ses_until', sesFecha(mia.paper.exp)))}
+    const mine = sesLoad(SES_LS)
+    if (!mine?.paper || mine.paper.exp <= Date.now()) { host.innerHTML = ''; return }
+    host.innerHTML = `<div class="banner ok">${svt('ses_in', esc(mine.name || mine.paper.sid.slice(0, 8)))} · ${esc(svt('ses_until', sesFormatDate(mine.paper.exp)))}
       <button class="btn ghost" id="ses-leave" data-testid="ses-leave" style="margin-left:8px">${esc(svt('ses_leave'))}</button></div>`
     document.getElementById('ses-leave')?.addEventListener('click', () => {
       try { localStorage.removeItem(SES_LS) } catch (_) {}
-      pintaMia()
+      renderMine()
     })
   }
 
   /** Las que este aparato concedió: se ven y se cierran. */
-  function pintaDadas () {
+  function renderGiven () {
     const host = document.getElementById('ses-given'); if (!host) return
-    const dadas = (sesLoad(SES_GIVEN) || []).filter((x) => x.exp > Date.now())
-    sesSave(SES_GIVEN, dadas)
-    if (!dadas.length) { host.innerHTML = `<p class="muted">${esc(svt('ses_none'))}</p>`; return }
-    host.innerHTML = dadas.map((d) => `<div class="row" data-sid="${esc(d.sid)}">
-      <div><strong>${esc(d.origin)}</strong><br><span class="muted">${esc(svt('ses_until', sesFecha(d.exp)))}</span></div>
+    const given = (sesLoad(SES_GIVEN) || []).filter((x) => x.exp > Date.now())
+    sesSave(SES_GIVEN, given)
+    if (!given.length) { host.innerHTML = `<p class="muted">${esc(svt('ses_none'))}</p>`; return }
+    host.innerHTML = given.map((d) => `<div class="row" data-sid="${esc(d.sid)}">
+      <div><strong>${esc(d.origin)}</strong><br><span class="muted">${esc(svt('ses_until', sesFormatDate(d.exp)))}</span></div>
       <button class="btn ghost ses-close" data-sid="${esc(d.sid)}">${esc(svt('ses_close'))}</button></div>`).join('')
     host.querySelectorAll('.ses-close').forEach((b) => b.addEventListener('click', async () => {
       const sid = b.getAttribute('data-sid')
       const d = (sesLoad(SES_GIVEN) || []).find((x) => x.sid === sid)
       sesSave(SES_GIVEN, (sesLoad(SES_GIVEN) || []).filter((x) => x.sid !== sid))
-      pintaDadas(); alerta('ses-given', svt('ses_closed'))
+      renderGiven(); flash('ses-given', svt('ses_closed'))
       // Avisar es cortesía: lo que la corta de verdad es que el papel vence y nadie lo
       // renueva. Si el aviso no llega, la sesión muere igual.
       try {
         if (d?.s) {
           const { id } = await connectProvider()
-          const t = await sesTransporteIdentidad(id)
+          const t = await sesIdentityTransport(id)
           await closeSession({ transport: t, sessionPubkey: d.s, encPub: d.encPub, sid }); t.close?.()
         }
       } catch (_) {}
@@ -941,46 +882,46 @@ async function sessionsMode () {
    * pantalla: las dos responden a la misma pregunta —quién está usando tu identidad— y
    * separarlas obligaría al usuario a saber la diferencia entre un permiso y una sesión.
    */
-  async function pintaPermisos () {
+  async function renderGrants () {
     const host = document.getElementById('ses-grants'); if (!host) return
-    let lista = []
-    try { const { id } = await connectProvider(); lista = await id.listGrants?.() || [] } catch (_) { }
-    if (!lista.length) { host.innerHTML = `<p class="muted">${esc(svt('gr_none'))}</p>`; return }
-    const nombre = (o) => { try { const h = new URL(o).hostname; const m = /^([a-z0-9-]+)\.dotrino\.com$/.exec(h); return m ? m[1][0].toUpperCase() + m[1].slice(1) : h } catch (_) { return o } }
+    let grants = []
+    try { const { id } = await connectProvider(); grants = await id.listGrants?.() || [] } catch (_) { }
+    if (!grants.length) { host.innerHTML = `<p class="muted">${esc(svt('gr_none'))}</p>`; return }
+    const appName = (o) => { try { const h = new URL(o).hostname; const m = /^([a-z0-9-]+)\.dotrino\.com$/.exec(h); return m ? m[1][0].toUpperCase() + m[1].slice(1) : h } catch (_) { return o } }
     // QUIÉN pide arriba y CUÁNDO fue la última vez debajo: sin la fecha, la lista dice qué
     // concediste pero no si sigue usándose, que es lo que decide si retirarlo.
     // Lo que el origen dice pedir por otro va SUBORDINADO a él, nunca en su lugar.
-    host.innerHTML = lista.map((g) => `<div class="row">
-      <div><strong>${esc(g.onBehalfOf || nombre(g.origin))}</strong><br><span class="muted">${g.onBehalfOf ? esc(svt('gr_via')) + ' ' : ''}${esc(g.origin.replace(/^https?:\/\//, ''))}${g.scopes.length ? ' · ' + esc(sesScopeNombres(g.scopes).join(', ')) : ''}<br>${esc(svt('gr_last', sesFecha(g.lastUsed || g.at)))}</span></div>
+    host.innerHTML = grants.map((g) => `<div class="row">
+      <div><strong>${esc(g.onBehalfOf || appName(g.origin))}</strong><br><span class="muted">${g.onBehalfOf ? esc(svt('gr_via')) + ' ' : ''}${esc(g.origin.replace(/^https?:\/\//, ''))}${g.scopes.length ? ' · ' + esc(sesGrantScopeLabels(g.scopes).join(', ')) : ''}<br>${esc(svt('gr_last', sesFormatDate(g.lastUsed || g.at)))}</span></div>
       <button class="btn ghost gr-revoke" data-origin="${esc(g.origin)}" data-on-behalf-of="${esc(g.onBehalfOf || '')}">${esc(svt('gr_revoke'))}</button></div>`).join('')
     host.querySelectorAll('.gr-revoke').forEach((b) => b.addEventListener('click', async () => {
       // Las apps que entran por el puente comparten origen: sin su nombre, retirar no
       // encontraría la suya (identity ≥ 0.93.0).
       try { const { id } = await connectProvider(); await id.revokeGrant(b.getAttribute('data-origin'), b.getAttribute('data-on-behalf-of') || undefined) } catch (_) {}
-      pintaPermisos(); alerta('ses-grants', svt('gr_revoked'))
+      renderGrants(); flash('ses-grants', svt('gr_revoked'))
     }))
   }
 
   /** Llave de sesión de este navegador (se guarda: reconectar no debe cambiar de identidad). */
-  async function sesLlaveLocal () {
+  async function sesLocalKey () {
     let k = sesLoad('dotrino.session.key')
     if (!k?.privateJwk) { k = await makeDeviceKey({ label: 'sesión' }); sesSave('dotrino.session.key', k) }
     return k
   }
 
   /** LADO DEL QUE ENTRA: enseña el código y espera. */
-  async function entrar () {
+  async function enter () {
     const box = document.getElementById('ses-open-box'); if (!box) return
-    const llave = await sesLlaveLocal()
+    const sessionKey = await sesLocalKey()
     const enc = await makeEncKeypair()
     let client
-    try { client = await sesTransporte(llave, enc.privateKey) } catch (_) { return alerta('ses-open-box', svt('ses_err'), 'bad') }
+    try { client = await sesTransport(sessionKey, enc.privateKey) } catch (_) { return flash('ses-open-box', svt('ses_err'), 'bad') }
     try {
       const s = await openSession({
-        transport: client, sessionPubkey: llave.publickey, encPub: enc.encPub,
+        transport: client, sessionPubkey: sessionKey.publickey, encPub: enc.encPub,
         origin: location.origin, scopes: ['id:whoami', 'vault:store'],
         onInvite: ({ qr, code }) => {
-          box.innerHTML = `<div class="qr">${qrSvg(qr)}</div>
+          box.innerHTML = `<div class="qr">${qrSvg(qr, { ecc: 'L' })}</div>
             <p><strong>${esc(svt('ses_code'))}: ${esc(code)}</strong></p>
             <p class="muted">${esc(svt('ses_code_hint'))}</p>
             <p class="muted" data-testid="ses-waiting">${esc(svt('ses_waiting'))}</p>
@@ -990,54 +931,54 @@ async function sessionsMode () {
       })
       // La HUELLA legible (AB12-CD34), no el JWK crudo: al usuario hay que enseñarle en qué
       // cuenta entró, no una llave.
-      const huella = await keyLabel(s.profileId).catch(() => null)
-      sesSave(SES_LS, { paper: s.paper, chain: s.chain, name: huella, privateJwk: llave.privateJwk })
+      const fingerprint = await keyLabel(s.profileId).catch(() => null)
+      sesSave(SES_LS, { paper: s.paper, chain: s.chain, name: fingerprint, privateJwk: sessionKey.privateJwk })
       box.innerHTML = `<button class="btn" id="ses-open" data-testid="ses-open">${esc(svt('ses_open'))}</button>`
-      document.getElementById('ses-open')?.addEventListener('click', entrar)
-      pintaMia()
+      document.getElementById('ses-open')?.addEventListener('click', enter)
+      renderMine()
     } catch (e) {
-      const cual = e?.code === 'session-denied' ? 'ses_denied' : e?.code === 'session-timeout' ? 'ses_timeout' : 'ses_err'
+      const errKey = e?.code === 'session-denied' ? 'ses_denied' : e?.code === 'session-timeout' ? 'ses_timeout' : 'ses_err'
       box.innerHTML = `<button class="btn" id="ses-open" data-testid="ses-open">${esc(svt('ses_open'))}</button>`
-      document.getElementById('ses-open')?.addEventListener('click', entrar)
-      alerta('ses-open-box', svt(cual), 'bad')
+      document.getElementById('ses-open')?.addEventListener('click', enter)
+      flash('ses-open-box', svt(errKey), 'bad')
     } finally { try { client.close?.() } catch (_) {} }
   }
 
   /** LADO DEL QUE RESPALDA: qué pide, y decidir. Nada se concede sin que el dueño pulse. */
-  function pedirPermiso (inv) {
+  function askPermission (inv) {
     const box = document.getElementById('ses-grant-box'); if (!box) return
     const scopes = cleanSessionScopes(inv.scopes)
     box.innerHTML = `<div class="banner">${svt('ses_asks', esc(inv.origin))}
-      <p class="muted">${esc(svt('ses_scopes'))}: ${esc(sesScopeTexto(scopes).join(', '))}</p>
+      <p class="muted">${esc(svt('ses_scopes'))}: ${esc(sesScopeLabels(scopes).join(', '))}</p>
       <p><strong>${esc(svt('ses_code'))}: ${esc(sessionCode(inv.sid))}</strong></p>
       <p class="muted">${esc(svt('ses_code_hint'))}</p>
       <button class="btn" id="ses-allow" data-testid="ses-allow">${esc(svt('ses_allow'))}</button>
       <button class="btn ghost" id="ses-deny" data-testid="ses-deny">${esc(svt('ses_deny'))}</button></div>`
     document.getElementById('ses-deny')?.addEventListener('click', async () => {
-      pintaGrantBox()
+      renderGrantBox()
       try {
         const { id } = await connectProvider()
-        const t = await sesTransporteIdentidad(id); await denySession({ transport: t, invite: inv }); t.close?.()
+        const t = await sesIdentityTransport(id); await denySession({ transport: t, invite: inv }); t.close?.()
       } catch (_) {}
     })
     document.getElementById('ses-allow')?.addEventListener('click', async () => {
       let id
-      try { ({ id } = await connectProvider()) } catch { return alerta('ses-grant-box', svt('err_noid_body'), 'bad') }
+      try { ({ id } = await connectProvider()) } catch { return flash('ses-grant-box', svt('err_noid_body'), 'bad') }
       try {
         const chain = await id.sealerChain()
         const by = (await id.currentProfile?.().catch(() => null))?.pubkey || id.me.publickey
-        const t = await sesTransporteIdentidad(id)
+        const t = await sesIdentityTransport(id)
         const paper = await grantSession({
           transport: t, invite: inv, by, chain, scopes,
           sign: (body) => id.signData(body)
         })
         t.close?.()
-        const dadas = sesLoad(SES_GIVEN) || []
-        dadas.push({ sid: paper.sid, s: paper.s, encPub: inv.encPub, origin: paper.origin, exp: paper.exp })
-        sesSave(SES_GIVEN, dadas)
-        pintaGrantBox(); pintaDadas()
+        const given = sesLoad(SES_GIVEN) || []
+        given.push({ sid: paper.sid, s: paper.s, encPub: inv.encPub, origin: paper.origin, exp: paper.exp })
+        sesSave(SES_GIVEN, given)
+        renderGrantBox(); renderGiven()
       } catch (e) {
-        pintaGrantBox(); alerta('ses-grant-box', svt('ses_err'), 'bad')
+        renderGrantBox(); flash('ses-grant-box', svt('ses_err'), 'bad')
       }
     })
   }
@@ -1114,7 +1055,7 @@ async function selfVaultMode () {
       const code = b64urlEncode(json)
       pairBox.innerHTML = `<div class="sv-setup">
         <p class="status">${esc(svt('pair_step1'))}</p>
-        <div class="sv-qr-wrap" title="QR">${qrSvg(json)}</div>
+        <div class="sv-qr-wrap" title="QR">${qrSvg(json, { ecc: 'L' })}</div>
         <div class="sv-qr-code"><pre><code>${esc(code)}</code></pre></div>
         <button class="btn ghost" id="svCopy">${esc(svt('copy'))}</button>
         <span class="status" id="svCopyMsg"></span>
@@ -1342,14 +1283,14 @@ async function loginMode () {
   </div>`)
   wireLangReload()
 
-  const msg = (texto, tipo = 'bad') => { document.getElementById('lg-msg').innerHTML = `<div class="banner ${tipo}">${esc(texto)}</div>` }
-  const campo = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id))
-  campo('lg-addr').focus()
-  campo('lg-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') entrar() })
-  document.getElementById('lg-go').onclick = entrar
+  const msg = (message, kind = 'bad') => { document.getElementById('lg-msg').innerHTML = `<div class="banner ${kind}">${esc(message)}</div>` }
+  const field = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id))
+  field('lg-addr').focus()
+  field('lg-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') enter() })
+  document.getElementById('lg-go').onclick = enter
 
   /** «Vuelve a probar en…» en palabras, no en milisegundos. */
-  function espera (ms) {
+  function waitText (ms) {
     const s = Math.max(1, Math.ceil(ms / 1000))
     return s >= 60 ? t.mins(Math.ceil(s / 60)) : t.secs(s)
   }
@@ -1360,10 +1301,10 @@ async function loginMode () {
    * distintas — una contraseña se corrige, una bóveda apagada se enciende, una espera se
    * espera.
    */
-  function explicar (e) {
+  function explainError (e) {
     switch (e?.code) {
       case 'login-failed': return t.failed
-      case 'too-many-tries': return t.tooMany(espera(e.waitMs || 60000))
+      case 'too-many-tries': return t.tooMany(waitText(e.waitMs || 60000))
       case 'no-vault': return t.noVault
       case 'logins-unavailable': return t.unavailable
       case 'bad-address': case 'bad-user': return t.badAddress
@@ -1372,9 +1313,9 @@ async function loginMode () {
     }
   }
 
-  async function entrar () {
-    const address = campo('lg-addr').value.trim()
-    const password = campo('lg-pass').value
+  async function enter () {
+    const address = field('lg-addr').value.trim()
+    const password = field('lg-pass').value
     if (!address) return msg(t.needAddr)
     if (!password) return msg(t.needPass)
     const btn = /** @type {HTMLButtonElement} */ (document.getElementById('lg-go'))
@@ -1383,7 +1324,7 @@ async function loginMode () {
       const id = await Identity.connect()
       await id.loginWithPassword({
         address, password,
-        remember: campo('lg-remember').checked,
+        remember: field('lg-remember').checked,
         // De dónde se entró: es lo que el dueño va a leer en su consola para decidir si
         // cerrar esta sesión. El nombre del equipo no lo sabe el navegador, así que va la
         // aplicación desde la que se entró.
@@ -1394,8 +1335,8 @@ async function loginMode () {
       location.href = returnUrl || appBase()
     } catch (e) {
       btn.disabled = false; btn.textContent = t.enter
-      campo('lg-pass').value = ''
-      msg(explicar(e))
+      field('lg-pass').value = ''
+      msg(explainError(e))
     }
   }
 }
@@ -1486,7 +1427,8 @@ async function main() {
   if (data.mode === 'validate') {
     const p = data.payload || {}
     const signed = { op: p.op || 'app-request', text: p.text, ts: p.ts }
-    const ok = await verifySig(p.pubkey, signed, p.signature)
+    // La verificación es la del pilar: ECDSA P-256 sobre la forma canónica de identity.
+    const ok = await verifyDeviceSig({ publickey: p.pubkey, data: signed, signature: p.signature })
     const banner = ok
       ? `<div class="banner ok">${svt('val_ok')}${p.nickname ? svt('val_ok_by', esc(p.nickname)) : ''}</div>`
       : `<div class="banner bad">${svt('val_bad')}</div>`
