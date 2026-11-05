@@ -12,8 +12,10 @@
  * Reutiliza @dotrino/identity + @dotrino/profile + @dotrino/reputation. La
  * verificación es client-side (solo necesita la clave PÚBLICA, que va en el link).
  */
-import { Identity, verifyDeviceSig } from '@dotrino/identity'
-import { avatarDataUri } from '@dotrino/identity/capabilities'
+import { Identity } from '@dotrino/identity'
+// verifyDeviceSig: la misma función que reexporta '@dotrino/identity', importada de donde
+// vive (el `.d.ts` de la raíz del pilar no la declara).
+import { avatarDataUri, verifyDeviceSig } from '@dotrino/identity/capabilities'
 import { createVaultReputation } from '@dotrino/reputation'
 import { createVaultProfileProvider } from '@dotrino/profile'
 import '@dotrino/profile' // registra el custom element <dotrino-profile>
@@ -27,11 +29,86 @@ import { openSession, grantSession, denySession, closeSession, parseInvite, sess
 import { WebSocketProxyClient, makeEncKeypair } from '@dotrino/proxy-client'
 import '@dotrino/theme/theme.css'
 
-const mount = document.getElementById('app')
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const showState = (title, html = '') =>
+/** @typedef {import('@dotrino/identity').DeviceKey} DeviceKey */
+/** @typedef {import('@dotrino/identity').SessionPaper} SessionPaper */
+/** @typedef {import('@dotrino/identity/session-flow').SessionInvite} SessionInvite */
+/** @typedef {import('@dotrino/profile').ProfileProvider} ProfileProvider */
+/**
+ * El código de emparejamiento con una bóveda (lo que pinta `dotrino-vault pair`).
+ * @typedef {{ v?: number, iss: string, token: string, sn?: string, proxy?: string }} PairQr
+ */
+/**
+ * Un error de los pilares: lo que decide es su `code`, no su frase.
+ * @typedef {Error & { code?: string, waitMs?: number, detail?: { profile?: string, name?: string } }} CodedError
+ */
+/**
+ * La sesión de ESTE navegador, si entró por «entrar en otro navegador».
+ * @typedef {{ paper: SessionPaper, chain: unknown[], name: string, privateJwk: JsonWebKey }} MySession
+ */
+/**
+ * Una sesión que este aparato concedió a otro.
+ * @typedef {{ sid: string, s: string, encPub?: string, origin: string, exp: number }} GivenSession
+ */
+/**
+ * Textos de una pantalla: frase fija, o función que arma la frase.
+ * @typedef {Record<string, string | ((...args: string[]) => string)>} Strings
+ */
+
+/**
+ * El elemento con ese id, del tipo pedido. Lo pintó esta misma app, así que si falta es un
+ * fallo y se dice, en vez de seguir con `null`.
+ * @template {typeof Element} [C=typeof HTMLElement]
+ * @param {string} id
+ * @param {C} [type]
+ * @returns {InstanceType<C>}
+ */
+function byId (id, type) {
+  const el = document.getElementById(id)
+  if (!(el instanceof (type ?? HTMLElement))) throw new Error(`profile-app: #${id} not found`)
+  return /** @type {InstanceType<C>} */ (el)
+}
+
+/**
+ * Como `byId`, pero con un selector dentro de `root`.
+ * @template {typeof Element} [C=typeof HTMLElement]
+ * @param {ParentNode} root
+ * @param {string} sel
+ * @param {C} [type]
+ * @returns {InstanceType<C>}
+ */
+function find (root, sel, type) {
+  const el = root.querySelector(sel)
+  if (!(el instanceof (type ?? HTMLElement))) throw new Error(`profile-app: ${sel} not found`)
+  return /** @type {InstanceType<C>} */ (el)
+}
+
+/**
+ * Todos los elementos de `sel` dentro de `root` que son del tipo pedido.
+ * @template {typeof Element} C
+ * @param {ParentNode} root
+ * @param {string} sel
+ * @param {C} type
+ * @returns {InstanceType<C>[]}
+ */
+function findAll (root, sel, type) {
+  return /** @type {InstanceType<C>[]} */ ([...root.querySelectorAll(sel)].filter((el) => el instanceof type))
+}
+
+/**
+ * Lo que se enseña de un error: su `message`, o el valor tal cual si no lo trae.
+ * @param {unknown} e
+ */
+function errMsg (e) {
+  const m = e && typeof e === 'object' && 'message' in e ? e.message : undefined
+  return String(m || e)
+}
+
+const mount = byId('app')
+const esc = (/** @type {unknown} */ s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const showState = (/** @type {string} */ title, html = '') =>
   (mount.innerHTML = `<div class="state">${title ? `<h1>${esc(title)}</h1>` : ''}${html}</div>`)
 
+/** @param {string} s */
 function b64urlDecode(s) {
   s = String(s).replace(/-/g, '+').replace(/_/g, '/')
   while (s.length % 4) s += '='
@@ -41,6 +118,7 @@ function b64urlDecode(s) {
 }
 // base64url del JSON: para el CÓDIGO COPIABLE (oculta iss/token/sn en texto plano,
 // más corto). El QR usa el JSON crudo. El agente (CLI) acepta ambos formatos.
+/** @param {string} str */
 function b64urlEncode(str) {
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(str)))
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -61,6 +139,7 @@ function appBase () {
   if (!p.endsWith('/')) p += '/'
   return p
 }
+/** @param {string} view */
 function viewUrl (view) { return appBase() + view } // view: '' | 'myvault' | 'vault' | 'sessions' | 'login'
 
 function parseRoute() {
@@ -73,7 +152,8 @@ function parseRoute() {
     try { return { mode: 'vault', qr: JSON.parse(b64urlDecode(h.slice(6))), token: true } } catch { return { mode: 'vault', token: true } }
   }
   // 2) VISTAS por PATH (o hash legacy #myvault/#vault → se migra al path en main()).
-  const seg = location.pathname.replace(/\/+$/, '').split('/').pop().toLowerCase()
+  const parts = location.pathname.replace(/\/+$/, '').split('/')
+  const seg = parts[parts.length - 1].toLowerCase()
   if (seg === 'myvault' || h === 'myvault') return { mode: 'selfvault', legacy: h === 'myvault' }
   if (seg === 'vault' || h === 'vault') return { mode: 'vault', legacy: h === 'vault' }
   if (seg === 'create') return { mode: 'create' }
@@ -85,7 +165,8 @@ function parseRoute() {
       const q = new URLSearchParams(h)
       const p = q.get('p') || q.get('pubkey')
       if (!p) return { mode: 'invalid' }
-      return { mode: 'rate', pubkey: b64urlDecode(p), name: q.get('name') ? b64urlDecode(q.get('name')) : '', since: q.get('since') || '' }
+      const qname = q.get('name')
+      return { mode: 'rate', pubkey: b64urlDecode(p), name: qname ? b64urlDecode(qname) : '', since: q.get('since') || '' }
     }
     return { mode: 'rate', pubkey: b64urlDecode(h), name: '', since: '' }
   }
@@ -100,6 +181,9 @@ async function connectProvider() {
   return { id, provider: createVaultProfileProvider({ identity: id, reputation }) }
 }
 
+/**
+ * @param {{ pubkey: string, name?: string | null, since?: string, mode: string, modal?: boolean, manage?: boolean }} opts
+ */
 function makeProfile({ pubkey, name, since, mode, modal, manage }) {
   const el = document.createElement('dotrino-profile')
   if (modal) el.setAttribute('modal', '')
@@ -198,6 +282,10 @@ function injectVaultStyles () {
 }
 
 // Extrae el objeto de emparejamiento de un texto: URL profile.dotrino.com/#vault=… o JSON crudo.
+/**
+ * @param {string | null | undefined} text
+ * @returns {PairQr | null}
+ */
 function extractPayload (text) {
   if (!text) return null
   text = String(text).trim()
@@ -208,18 +296,24 @@ function extractPayload (text) {
 
 // Lee un QR con el lector del ecosistema (<dotrino-qr-scan>, @dotrino/qr): cámara, o una
 // foto cuando no hay cámara. Devuelve el texto, o null si el usuario cierra.
+/** @returns {Promise<string | null>} */
 function scanQr () {
   return new Promise((resolve) => {
-    const scan = document.createElement('dotrino-qr-scan')
+    const scan = /** @type {import('@dotrino/qr').DotrinoQrScan} */ (document.createElement('dotrino-qr-scan'))
     scan.setAttribute('lang', svLang === 'en' ? 'en' : 'es')
-    const done = (text) => { scan.open = false; scan.remove(); resolve(text) }
-    scan.addEventListener('dotrino-qr-scanned', (e) => done(e.detail?.text || null))
+    const done = (/** @type {string | null} */ text) => { scan.open = false; scan.remove(); resolve(text) }
+    scan.addEventListener('dotrino-qr-scanned', (e) => done(/** @type {CustomEvent<{ text?: string }>} */ (e).detail?.text || null))
     scan.addEventListener('dotrino-qr-cancelled', () => done(null))
     document.body.appendChild(scan)
     scan.open = true
   })
 }
 
+/**
+ * @param {string} title
+ * @param {string} inner
+ * @param {string} [tag]
+ */
 function vaultShell (title, inner, tag = svt('tag_identity')) {
   mount.innerHTML = `<div class="vault-page">
     <dotrino-topbar class="vault-topbar" brand-href="https://dotrino.com/"
@@ -254,6 +348,7 @@ async function decorateProfileButton () {
 // activo SOLO en este dispositivo. Cambiar/crear/renombrar perfil lo hace el
 // componente <dotrino-profile mode="self" manage> (switcher integrado); aquí solo
 // va lo que es exclusivo de esta página: el candado por PIN.
+/** @param {HTMLElement} host */
 async function renderPinSection (host) {
   let id
   try { id = await Identity.connect() } catch { return }
@@ -267,7 +362,7 @@ async function renderPinSection (host) {
       <p class="muted" style="font-size:12.5px;margin:6px 0 0">${svt('pin_desc')}</p>
       <div id="pf-form"></div>
     </div>`
-  host.querySelector('#pin-toggle').onclick = () => {
+  find(host, '#pin-toggle').onclick = () => {
     if (lock.protected) {
       confirmDelete(host, null, async () => { await id.removeProfilePassword(); location.reload() },
         svt('pin_remove_q'), svt('pin_remove'))
@@ -278,36 +373,51 @@ async function renderPinSection (host) {
 }
 
 // Formulario inline de PIN (candado local): pide el PIN dos veces.
+/**
+ * @param {HTMLElement} overlay
+ * @param {(pin: string) => Promise<void>} onSubmit
+ */
 function pinForm (overlay, onSubmit) {
-  const host = overlay.querySelector('#pf-form')
+  const host = find(overlay, '#pf-form')
   host.innerHTML = `<div class="pf-nameform" style="flex-wrap:wrap">
     <input id="pf-pin1" type="password" inputmode="numeric" maxlength="64" placeholder="${esc(svt('pin_ph1'))}" />
     <input id="pf-pin2" type="password" inputmode="numeric" maxlength="64" placeholder="${esc(svt('pin_ph2'))}" />
     <button class="btn" id="pf-pingo">${svt('pin_go')}</button>
     <span class="muted" id="pf-pinerr" style="flex-basis:100%"></span></div>`
-  const p1 = host.querySelector('#pf-pin1'); const p2 = host.querySelector('#pf-pin2')
-  const err = host.querySelector('#pf-pinerr'); p1.focus()
+  const p1 = find(host, '#pf-pin1', HTMLInputElement); const p2 = find(host, '#pf-pin2', HTMLInputElement)
+  const err = find(host, '#pf-pinerr'); p1.focus()
+  const goBtn = find(host, '#pf-pingo', HTMLButtonElement)
   const go = async () => {
     err.textContent = ''
     if (p1.value.length < 4) { err.textContent = svt('pin_min'); return }
     if (p1.value !== p2.value) { err.textContent = svt('pin_mismatch'); return }
-    host.querySelector('#pf-pingo').disabled = true
-    try { await onSubmit(p1.value) } catch (e) { err.textContent = e.message; host.querySelector('#pf-pingo').disabled = false }
+    goBtn.disabled = true
+    try { await onSubmit(p1.value) } catch (e) { err.textContent = errMsg(e); goBtn.disabled = false }
   }
-  host.querySelector('#pf-pingo').onclick = go
+  goBtn.onclick = go
   p2.onkeydown = (e) => { if (e.key === 'Enter') go() }
 }
 
 // Confirmación inline de borrado (sin confirm() del navegador).
+/**
+ * @param {HTMLElement} overlay
+ * @param {HTMLElement | null} btn
+ * @param {() => Promise<void>} onYes
+ * @param {string} [msg]
+ * @param {string} [yes]
+ */
 function confirmDelete (overlay, btn, onYes, msg = svt('del_msg'), yes = svt('del_yes')) {
-  const host = overlay.querySelector('#pf-form')
+  const host = find(overlay, '#pf-form')
   host.innerHTML = `<div class="pf-confirm"><span>${esc(msg)}</span><button class="btn danger" id="pf-yes">${esc(yes)}</button><button class="btn ghost" id="pf-no">${esc(svt('cancel'))}</button></div>`
-  host.querySelector('#pf-no').onclick = () => { host.innerHTML = '' }
-  host.querySelector('#pf-yes').onclick = async () => { host.querySelector('#pf-yes').disabled = true; await onYes() }
+  find(host, '#pf-no').onclick = () => { host.innerHTML = '' }
+  const yesBtn = find(host, '#pf-yes', HTMLButtonElement)
+  yesBtn.onclick = async () => { yesBtn.disabled = true; await onYes() }
 }
 
+/** @param {PairQr | null} [prefillQr] */
 async function vaultMode (prefillQr) {
   injectVaultStyles()
+  /** @type {Identity} */
   let id
   try { id = await Identity.connect() } catch {
     showState(svt('v_title'), `<p>${svt('v_connect_err')}</p>`); return
@@ -372,7 +482,11 @@ async function vaultMode (prefillQr) {
   </div>`)
   wireLangReload()
 
-  const msg = () => document.getElementById('vmsg')
+  const msg = () => byId('vmsg')
+  /**
+   * @param {PairQr | null} qr
+   * @param {boolean} [skip]
+   */
   async function doConnect (qr, skip) {
     if (!qr || !qr.iss || !qr.token) { msg().innerHTML = `<div class="banner bad">${svt('v_bad_code')}</div>`; return }
     if (!qr.sn || (qr.v && qr.v < 2)) { msg().innerHTML = `<div class="banner bad">${svt('v_old_code')}</div>`; return }
@@ -387,7 +501,7 @@ async function vaultMode (prefillQr) {
         <p class="muted">${svt('v_new_account_d')}</p>
         <button class="btn" id="pick-go">${svt('v_new_account_go')}</button>
       </div>`
-      msg().querySelector('#pick-go').onclick = () => doConnect(qr, true)
+      find(msg(), '#pick-go').onclick = () => doConnect(qr, true)
       return
     }
     msg().innerHTML = `<div class="banner">${svt('v_connecting')}</div>`
@@ -408,18 +522,20 @@ async function vaultMode (prefillQr) {
       msg().innerHTML = `<div class="banner ok">${svt('v_connected_done')}</div>
         <div class="banner"><strong>${svt('v_two_title')}</strong><p>${svt('v_two_body')}</p></div>`
       setTimeout(() => vaultMode(), 1600)
-    } catch (e) {
+    } catch (caught) {
       off()
+      const e = /** @type {CodedError} */ (caught)
       // Esa bóveda ya vive en OTRA cuenta de este aparato: no se duplica, se te lleva a
       // ella. Por `code` y no por el texto del error (que se traduce y cambia).
       if (e?.code === 'ALREADY_PAIRED') {
         const otherProfile = e.detail?.profile
         msg().innerHTML = `<div class="banner">${svt('v_already_paired', esc(e.detail?.name || ''))}</div>
           <div><button class="btn" id="go-other">${svt('v_already_paired_go')}</button></div>`
-        msg().querySelector('#go-other').onclick = async () => {
+        find(msg(), '#go-other').onclick = async () => {
           // Cambiar de cuenta no es reactivo (por diseño): se recarga para entrar con ella.
+          if (!otherProfile) { msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', 'ALREADY_PAIRED without profile')}</div>`; return }
           try { await id.switchProfile(otherProfile); location.reload() }
-          catch (err) { msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(err.message))}</div>` }
+          catch (err) { msg().innerHTML = `<div class="banner bad">${svt('v_connect_fail', esc(errMsg(err)))}</div>` }
         }
         return
       }
@@ -427,17 +543,18 @@ async function vaultMode (prefillQr) {
     }
   }
 
-  document.getElementById('connect').onclick = () => {
-    try { doConnect(JSON.parse(document.getElementById('qr').value.trim())) }
+  byId('connect').onclick = () => {
+    try { doConnect(JSON.parse(byId('qr', HTMLTextAreaElement).value.trim())) }
     catch { msg().innerHTML = `<div class="banner bad">${svt('v_pasted_invalid')}</div>` }
   }
-  document.getElementById('scan').onclick = async () => {
+  byId('scan').onclick = async () => {
     const text = await scanQr()
     if (text) doConnect(extractPayload(text))
   }
-  document.getElementById('openfile').onclick = () => document.getElementById('fileinput').click()
-  document.getElementById('fileinput').onchange = async (ev) => {
-    const f = ev.target.files?.[0]; if (!f) return
+  const fileInput = byId('fileinput', HTMLInputElement)
+  byId('openfile').onclick = () => fileInput.click()
+  fileInput.onchange = async () => {
+    const f = fileInput.files?.[0]; if (!f) return
     let text
     if (/^image\//.test(f.type)) { text = await scanImageFile(f); if (!text) { msg().innerHTML = `<div class="banner bad">${svt('v_no_qr_img')}</div>`; return } }
     else { text = await f.text() }
@@ -454,14 +571,22 @@ async function vaultMode (prefillQr) {
    binario del PC). Aquí lo activas, generas códigos de emparejamiento para
    enlazar agentes (ia, terminal), apruebas con SAS y listas/revocas máquinas —
    todo por RPC al iframe vía @dotrino/identity. */
+/** @type {ReturnType<typeof setInterval> | null} */
 let _svPresenceTimer = null
-const svEl = (h) => { const tp = document.createElement('template'); tp.innerHTML = h.trim(); return tp.content.firstElementChild }
+const svEl = (/** @type {string} */ h) => {
+  const tp = document.createElement('template'); tp.innerHTML = h.trim()
+  const el = tp.content.firstElementChild
+  if (!el) throw new Error('profile-app: empty template')
+  return el
+}
 
 // i18n de TODA la app (es/en). El toggle del topbar emite 'dotrino-lang'; al cambiar,
 // persistimos en 'dotrino.lang' (clave estándar del ecosistema, la misma que usa el
 // topbar y el resto de apps) y recargamos para servir toda la página en el idioma elegido.
+/** @type {'es' | 'en'} */
 let svLang = (() => { try { const s = localStorage.getItem('dotrino.lang'); if (s === 'en' || s === 'es') return s } catch {} return ((navigator.language || '').slice(0, 2) === 'en') ? 'en' : 'es' })()
 try { document.documentElement.lang = svLang } catch {}
+/** @type {{ es: Strings, en: Strings }} */
 const SV_I18N = {
   es: {
     h: 'Mi bóveda', loading: 'Cargando…',
@@ -706,6 +831,10 @@ const SV_I18N = {
     gr_last: (d) => `Last used: ${d}`,
   }
 }
+/**
+ * @param {string} k
+ * @param {...string} a
+ */
 function svt (k, ...a) { const v = SV_I18N[svLang]?.[k]; return String(typeof v === 'function' ? v(...a) : (v ?? k)) }
 // Conecta el toggle de idioma del <dotrino-topbar>: persiste y recarga para servir todo en el idioma elegido.
 function wireLangReload () {
@@ -732,25 +861,45 @@ function wireLangReload () {
 const SES_LS = 'dotrino.session.mine'      // el papel de ESTA sesión, si entramos aquí
 const SES_GIVEN = 'dotrino.session.given'  // las que ha concedido este aparato
 
+/** @param {string} k @returns {unknown} */
 const sesLoad = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null') } catch (_) { return null } }
+/** @param {string} k @param {unknown} v */
 const sesSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch (_) {} }
+const loadMine = () => /** @type {MySession | null} */ (sesLoad(SES_LS))
+const loadGiven = () => /** @type {GivenSession[] | null} */ (sesLoad(SES_GIVEN))
 
 /**
  * Aquí SÍ va `localStorage` y no el store del ecosistema, y no es un descuido: el
  * navegador que entra todavía NO tiene identidad —eso es lo que viene a conseguir—, así
  * que no hay store al que escribir. Y lo que se guarda vence solo.
  */
+/** @param {number} ms */
 function sesFormatDate (ms) {
   try { return new Date(ms).toLocaleString(svLang === 'en' ? 'en-US' : 'es-ES', { dateStyle: 'short', timeStyle: 'short' }) }
   catch (_) { return String(ms) }
 }
 
-const sesScopeLabels = (sc) => sc.map((x) => x === 'vault:store' ? svt('ses_scope_store') : svt('ses_scope_whoami'))
+const sesScopeLabels = (/** @type {string[]} */ sc) => sc.map((x) => x === 'vault:store' ? svt('ses_scope_store') : svt('ses_scope_whoami'))
 /** Los alcances del PERMISO (datos del perfil), en palabras. */
-const sesGrantScopeLabels = (sc) => (sc || []).map((x) => ({
-  'profile:name': svt('gr_name'), 'profile:avatar': svt('gr_avatar'),
-  'profile:email': svt('gr_email'), 'profile:social': svt('gr_links'), 'id:whoami': svt('ses_scope_whoami')
-})[x] || x)
+const sesGrantScopeLabels = (/** @type {string[] | undefined} */ sc) => (sc || []).map((x) => {
+  /** @type {Record<string, string>} */
+  const labels = {
+    'profile:name': svt('gr_name'), 'profile:avatar': svt('gr_avatar'),
+    'profile:email': svt('gr_email'), 'profile:social': svt('gr_links'), 'id:whoami': svt('ses_scope_whoami')
+  }
+  return labels[x] || x
+})
+
+/**
+ * La pubkey del perfil ACTIVO de este aparato. Sin ella no hay en nombre de quién hablar:
+ * se para y se dice.
+ * @param {Identity} id
+ */
+async function activePubkey (id) {
+  const pub = (await id.currentProfile?.().catch(() => null))?.pubkey || id.me?.publickey
+  if (!pub) throw new Error('profile-app: no active profile pubkey')
+  return pub
+}
 
 /**
  * Un transporte identificado con la identidad de ESTE aparato (la del perfil activo).
@@ -760,10 +909,11 @@ const sesGrantScopeLabels = (sc) => (sc || []).map((x) => ({
  * puntas están en el mismo navegador— acaba compartiendo pubkey con quien espera, así que
  * el papel nunca llegaba a su destino.
  */
+/** @param {Identity} id */
 async function sesIdentityTransport (id) {
   const client = new WebSocketProxyClient({ url: 'wss://proxy.dotrino.com', autoReconnect: true })
   await client.connect()
-  const pub = (await id.currentProfile?.().catch(() => null))?.pubkey || id.me.publickey
+  const pub = await activePubkey(id)
   await client.identifyAs({ publickey: pub, sign: (d) => id.signData(d) })
   return client
 }
@@ -775,7 +925,11 @@ async function sesIdentityTransport (id) {
  * cifra, CONVENCIONES §4.1) y sin la privada aquí el cliente del pilar no puede abrir el
  * sobre y lo descarta en silencio — la pantalla se queda esperando algo que ya llegó.
  */
-async function sesTransport (sessionKey, encPrivateKey = null) {
+/**
+ * @param {{ publickey: string, privateJwk: JsonWebKey }} sessionKey
+ * @param {CryptoKey} [encPrivateKey]
+ */
+async function sesTransport (sessionKey, encPrivateKey) {
   const client = new WebSocketProxyClient({ url: 'wss://proxy.dotrino.com', autoReconnect: true, myEncPrivateKey: encPrivateKey })
   await client.connect()
   await client.identifyAs({
@@ -804,6 +958,11 @@ async function sessionsMode () {
   renderGrantBox()
 
   document.getElementById('ses-open')?.addEventListener('click', enter)
+  /**
+   * @param {string} where
+   * @param {string} message
+   * @param {string} [kind]
+   */
   function flash (where, message, kind = 'ok') {
     const host = document.getElementById(where); if (!host) return
     const b = document.createElement('div'); b.className = 'banner ' + kind; b.textContent = message
@@ -816,13 +975,13 @@ async function sessionsMode () {
     box.innerHTML = `<button class="btn ghost" id="ses-scan" data-testid="ses-scan">📷</button>
       <div style="margin-top:8px"><input id="ses-paste" data-testid="ses-paste" placeholder="${esc(svt('ses_paste'))}" style="width:100%">
       <button class="btn ghost" id="ses-read" data-testid="ses-read" style="margin-top:6px">${esc(svt('ses_read'))}</button></div>`
-    const readInvite = (text) => {
+    const readInvite = (/** @type {string} */ text) => {
       const inv = parseInvite(extractPayload(text) || text)
       if (!inv) return flash('ses-grant-box', svt('v_pasted_invalid'), 'bad')
       askPermission(inv)
     }
     document.getElementById('ses-read')?.addEventListener('click', () => {
-      readInvite(/** @type {HTMLInputElement} */ (document.getElementById('ses-paste'))?.value || '')
+      readInvite(byId('ses-paste', HTMLInputElement).value || '')
     })
     document.getElementById('ses-scan')?.addEventListener('click', async () => {
       const scanned = await scanQr()
@@ -833,7 +992,7 @@ async function sessionsMode () {
   /** La sesión de ESTE navegador, si entramos aquí. */
   function renderMine () {
     const host = document.getElementById('ses-mine'); if (!host) return
-    const mine = sesLoad(SES_LS)
+    const mine = loadMine()
     if (!mine?.paper || mine.paper.exp <= Date.now()) { host.innerHTML = ''; return }
     host.innerHTML = `<div class="banner ok">${svt('ses_in', esc(mine.name || mine.paper.sid.slice(0, 8)))} · ${esc(svt('ses_until', sesFormatDate(mine.paper.exp)))}
       <button class="btn ghost" id="ses-leave" data-testid="ses-leave" style="margin-left:8px">${esc(svt('ses_leave'))}</button></div>`
@@ -846,7 +1005,7 @@ async function sessionsMode () {
   /** Las que este aparato concedió: se ven y se cierran. */
   function renderGiven () {
     const host = document.getElementById('ses-given'); if (!host) return
-    const given = (sesLoad(SES_GIVEN) || []).filter((x) => x.exp > Date.now())
+    const given = (loadGiven() || []).filter((x) => x.exp > Date.now())
     sesSave(SES_GIVEN, given)
     if (!given.length) { host.innerHTML = `<p class="muted">${esc(svt('ses_none'))}</p>`; return }
     host.innerHTML = given.map((d) => `<div class="row" data-sid="${esc(d.sid)}">
@@ -854,8 +1013,8 @@ async function sessionsMode () {
       <button class="btn ghost ses-close" data-sid="${esc(d.sid)}">${esc(svt('ses_close'))}</button></div>`).join('')
     host.querySelectorAll('.ses-close').forEach((b) => b.addEventListener('click', async () => {
       const sid = b.getAttribute('data-sid')
-      const d = (sesLoad(SES_GIVEN) || []).find((x) => x.sid === sid)
-      sesSave(SES_GIVEN, (sesLoad(SES_GIVEN) || []).filter((x) => x.sid !== sid))
+      const d = (loadGiven() || []).find((x) => x.sid === sid)
+      sesSave(SES_GIVEN, (loadGiven() || []).filter((x) => x.sid !== sid))
       renderGiven(); flash('ses-given', svt('ses_closed'))
       // Avisar es cortesía: lo que la corta de verdad es que el papel vence y nadie lo
       // renueva. Si el aviso no llega, la sesión muere igual.
@@ -863,7 +1022,7 @@ async function sessionsMode () {
         if (d?.s) {
           const { id } = await connectProvider()
           const t = await sesIdentityTransport(id)
-          await closeSession({ transport: t, sessionPubkey: d.s, encPub: d.encPub, sid }); t.close?.()
+          await closeSession({ transport: t, sessionPubkey: d.s, encPub: d.encPub, sid: d.sid }); t.close?.()
         }
       } catch (_) {}
     }))
@@ -876,10 +1035,11 @@ async function sessionsMode () {
    */
   async function renderGrants () {
     const host = document.getElementById('ses-grants'); if (!host) return
+    /** @type {Awaited<ReturnType<Identity['listGrants']>>} */
     let grants = []
     try { const { id } = await connectProvider(); grants = await id.listGrants?.() || [] } catch (_) { }
     if (!grants.length) { host.innerHTML = `<p class="muted">${esc(svt('gr_none'))}</p>`; return }
-    const appName = (o) => { try { const h = new URL(o).hostname; const m = /^([a-z0-9-]+)\.dotrino\.com$/.exec(h); return m ? m[1][0].toUpperCase() + m[1].slice(1) : h } catch (_) { return o } }
+    const appName = (/** @type {string} */ o) => { try { const h = new URL(o).hostname; const m = /^([a-z0-9-]+)\.dotrino\.com$/.exec(h); return m ? m[1][0].toUpperCase() + m[1].slice(1) : h } catch (_) { return o } }
     // QUIÉN pide arriba y CUÁNDO fue la última vez debajo: sin la fecha, la lista dice qué
     // concediste pero no si sigue usándose, que es lo que decide si retirarlo.
     // Lo que el origen dice pedir por otro va SUBORDINADO a él, nunca en su lugar.
@@ -889,14 +1049,19 @@ async function sessionsMode () {
     host.querySelectorAll('.gr-revoke').forEach((b) => b.addEventListener('click', async () => {
       // Las apps que entran por el puente comparten origen: sin su nombre, retirar no
       // encontraría la suya (identity ≥ 0.93.0).
-      try { const { id } = await connectProvider(); await id.revokeGrant(b.getAttribute('data-origin'), b.getAttribute('data-on-behalf-of') || undefined) } catch (_) {}
+      try {
+        const origin = b.getAttribute('data-origin')
+        if (!origin) throw new Error('profile-app: grant without origin')
+        const { id } = await connectProvider(); await id.revokeGrant(origin, b.getAttribute('data-on-behalf-of') || undefined)
+      } catch (_) {}
       renderGrants(); flash('ses-grants', svt('gr_revoked'))
     }))
   }
 
   /** Llave de sesión de este navegador (se guarda: reconectar no debe cambiar de identidad). */
+  /** @returns {Promise<DeviceKey>} */
   async function sesLocalKey () {
-    let k = sesLoad('dotrino.session.key')
+    let k = /** @type {DeviceKey | null} */ (sesLoad('dotrino.session.key'))
     if (!k?.privateJwk) { k = await makeDeviceKey({ label: 'sesión' }); sesSave('dotrino.session.key', k) }
     return k
   }
@@ -928,7 +1093,8 @@ async function sessionsMode () {
       box.innerHTML = `<button class="btn" id="ses-open" data-testid="ses-open">${esc(svt('ses_open'))}</button>`
       document.getElementById('ses-open')?.addEventListener('click', enter)
       renderMine()
-    } catch (e) {
+    } catch (caught) {
+      const e = /** @type {CodedError} */ (caught)
       const errKey = e?.code === 'session-denied' ? 'ses_denied' : e?.code === 'session-timeout' ? 'ses_timeout' : 'ses_err'
       box.innerHTML = `<button class="btn" id="ses-open" data-testid="ses-open">${esc(svt('ses_open'))}</button>`
       document.getElementById('ses-open')?.addEventListener('click', enter)
@@ -937,6 +1103,7 @@ async function sessionsMode () {
   }
 
   /** LADO DEL QUE RESPALDA: qué pide, y decidir. Nada se concede sin que el dueño pulse. */
+  /** @param {SessionInvite} inv */
   function askPermission (inv) {
     const box = document.getElementById('ses-grant-box'); if (!box) return
     const scopes = cleanSessionScopes(inv.scopes)
@@ -954,18 +1121,19 @@ async function sessionsMode () {
       } catch (_) {}
     })
     document.getElementById('ses-allow')?.addEventListener('click', async () => {
+      /** @type {Identity} */
       let id
       try { ({ id } = await connectProvider()) } catch { return flash('ses-grant-box', svt('err_noid_body'), 'bad') }
       try {
         const chain = await id.sealerChain()
-        const by = (await id.currentProfile?.().catch(() => null))?.pubkey || id.me.publickey
+        const by = await activePubkey(id)
         const t = await sesIdentityTransport(id)
         const paper = await grantSession({
           transport: t, invite: inv, by, chain, scopes,
           sign: (body) => id.signData(body)
         })
         t.close?.()
-        const given = sesLoad(SES_GIVEN) || []
+        const given = loadGiven() || []
         given.push({ sid: paper.sid, s: paper.s, encPub: inv.encPub, origin: paper.origin, exp: paper.exp })
         sesSave(SES_GIVEN, given)
         renderGrantBox(); renderGiven()
@@ -991,21 +1159,26 @@ async function selfVaultMode () {
   // NUNCA queda en BLANCO mientras conecta. Al resolver, se rellena #sv-root.
   vaultShell(svt('h'), `<div class="vault-wrap"><div id="sv-root"><span class="status">${esc(svt('loading'))}</span></div>${backBtn}</div>`, svt('h'))
   wireLangReload()
-  document.getElementById('svBack')?.addEventListener('click', () => { location.href = backHref })
-  const root = document.getElementById('sv-root')
+  document.getElementById('svBack')?.addEventListener('click', () => { if (backHref) location.href = backHref })
+  const root = byId('sv-root')
 
-  let id
-  try { id = await Identity.connect() } catch {}
-  if (!id?.me?.publickey) {
+  let connected
+  try { connected = await Identity.connect() } catch {}
+  if (!connected?.me?.publickey) {
     root.innerHTML = `<p class="status">${esc(svt('need_id'))} <a href="${viewUrl('')}" style="color:var(--dt-accent)">${esc(svt('need_id_link'))}</a>.</p>`
     return
   }
 
-  let pairBox, machinesBox
+  const id = connected
+  // `renderPending` vive dentro de `render()` (necesita sus cajas); el evento lo llama por
+  // aquí. Antes lo llamaba por su nombre, que fuera de `render()` no existe: cada aviso de
+  // pedido pendiente lanzaba ReferenceError.
+  /** @type {((list: any[]) => void) | null} */
+  let renderPending = null
   // Eventos del daemon del iframe: { pending? running? error? }
   id.onSelfVault((p) => {
     if (!p) return
-    if (Array.isArray(p.pending)) renderPending(p.pending)
+    if (Array.isArray(p.pending) && renderPending) renderPending(p.pending)
     if (typeof p.running === 'boolean') {
       const badge = root.querySelector('#svStatus')
       if (badge) badge.textContent = p.running ? svt('running') : svt('not_running')
@@ -1014,6 +1187,7 @@ async function selfVaultMode () {
 
   async function render () {
     if (_svPresenceTimer) { clearInterval(_svPresenceTimer); _svPresenceTimer = null }
+    renderPending = null
     let status
     try { status = await id.selfVaultStatus() } catch { status = { enabled: false, running: false } }
 
@@ -1021,7 +1195,7 @@ async function selfVaultMode () {
       root.innerHTML = `<p class="status">${esc(svt('intro_off'))}</p>
         <div class="sv-toggle-row"><span class="status">${esc(svt('state_off'))}</span></div>
         <button class="btn" id="svEnable" data-testid="sv-enable">${esc(svt('enable'))}</button>`
-      document.getElementById('svEnable').addEventListener('click', async () => { await id.setSelfVault(true); render() })
+      byId('svEnable').addEventListener('click', async () => { await id.setSelfVault(true); render() })
       return
     }
 
@@ -1029,14 +1203,14 @@ async function selfVaultMode () {
       <button class="btn ghost" id="svDisable" data-testid="sv-disable" style="margin-left:8px">${esc(svt('disable'))}</button>
       <div class="sv-block" id="svPair"></div>
       <div class="sv-block" id="svMachines"><span class="status">${esc(svt('machines_none'))}</span></div>`
-    document.getElementById('svDisable').addEventListener('click', async () => { await id.setSelfVault(false); render() })
+    byId('svDisable').addEventListener('click', async () => { await id.setSelfVault(false); render() })
 
-    pairBox = document.getElementById('svPair')
-    machinesBox = document.getElementById('svMachines')
+    const pairBox = byId('svPair')
+    const machinesBox = byId('svMachines')
 
     function renderPairIdle () {
       pairBox.innerHTML = `<div class="sv-setup"><button class="btn" id="svStartPair" data-testid="sv-start-pair">${esc(svt('pair_new'))}</button></div>`
-      document.getElementById('svStartPair').addEventListener('click', startPairing)
+      byId('svStartPair').addEventListener('click', startPairing)
     }
     async function startPairing () {
       let qr
@@ -1055,14 +1229,13 @@ async function selfVaultMode () {
         <p class="status">${esc(svt('pair_wait'))}</p>
         <button class="btn ghost" id="svCancel">${esc(svt('cancel'))}</button>
       </div>`
-      document.getElementById('svCopy').addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(code); document.getElementById('svCopyMsg').textContent = svt('copied') } catch {}
+      byId('svCopy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(code); byId('svCopyMsg').textContent = svt('copied') } catch {}
       })
-      document.getElementById('svCancel').addEventListener('click', renderPairIdle)
+      byId('svCancel').addEventListener('click', renderPairIdle)
     }
 
-    function renderPending (list) {
-      if (!pairBox) return
+    renderPending = (list) => {
       if (!list || !list.length) { if (pairBox.querySelector('.sv-pending')) renderPairIdle(); return }
       const rows = list.map((x) => `
         <div class="sv-pending" data-device="${esc(x.deviceId)}">
@@ -1074,34 +1247,37 @@ async function selfVaultMode () {
           </div>
         </div>`).join('')
       pairBox.innerHTML = `<div class="sv-setup">${rows}</div>`
-      const approveWith = async (b) => {
-        const dev = b.dataset.approve
+      const approveWith = async (/** @type {HTMLButtonElement} */ b) => {
+        const dev = b.getAttribute('data-approve'); if (!dev) return
         const input = pairBox.querySelector(`input[data-code="${CSS.escape(dev)}"]`)
-        const code = (input?.value || '').trim()
-        if (!code) { input?.focus(); return }
+        const code = (input instanceof HTMLInputElement ? input.value : '').trim()
+        if (!code) { if (input instanceof HTMLElement) input.focus(); return }
         b.disabled = true
         try { await id.selfVaultApprove(dev, code); refreshMachines() } catch { b.disabled = false }
       }
-      pairBox.querySelectorAll('[data-approve]').forEach((b) => {
+      findAll(pairBox, '[data-approve]', HTMLButtonElement).forEach((b) => {
         b.addEventListener('click', () => approveWith(b))
-        const input = pairBox.querySelector(`input[data-code="${CSS.escape(b.dataset.approve)}"]`)
-        input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') approveWith(b) })
+        const input = pairBox.querySelector(`input[data-code="${CSS.escape(b.getAttribute('data-approve') || '')}"]`)
+        input?.addEventListener('keydown', (e) => { if (/** @type {KeyboardEvent} */ (e).key === 'Enter') approveWith(b) })
       })
-      pairBox.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => id.selfVaultReject(b.dataset.reject)))
+      pairBox.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => {
+        const dev = b.getAttribute('data-reject'); if (dev) id.selfVaultReject(dev)
+      }))
     }
 
     try { renderPending(await id.selfVaultPending()) } catch {}
     renderPairIdle()
 
+    /** @param {string[]} subs */
     async function updatePresence (subs) {
       if (!subs.length) return
       let online = new Set()
       try { const r = await id.selfVaultProbe(subs); online = new Set(r.online || []) } catch {}
       for (const row of machinesBox.querySelectorAll('.sv-machine-row')) {
         const dot = row.querySelector('.sv-mdot'); if (!dot) continue
-        const on = online.has(row.dataset.sub)
+        const on = online.has(row.getAttribute('data-sub'))
         dot.className = 'sv-mdot ' + (on ? 'on' : 'off')
-        dot.title = on ? svt('online') : svt('offline')
+        dot.setAttribute('title', on ? svt('online') : svt('offline'))
       }
     }
     async function refreshMachines () {
@@ -1112,7 +1288,7 @@ async function selfVaultMode () {
           return
         }
         machinesBox.innerHTML = `<b>${esc(svt('machines_title'))}</b><div class="sv-machine-list"></div>`
-        const holder = machinesBox.querySelector('.sv-machine-list')
+        const holder = find(machinesBox, '.sv-machine-list')
         for (const d of list) {
           const name = d.label ? `${d.label} · ${d.deviceId}` : d.deviceId
           holder.appendChild(svEl(`<div class="sv-machine-row" data-sub="${esc(d.sub)}">
@@ -1120,13 +1296,16 @@ async function selfVaultMode () {
             <button class="btn ghost" data-revoke="${esc(d.nonce)}">${esc(svt('revoke'))}</button>
           </div>`))
         }
-        machinesBox.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => { await id.selfVaultRevoke(b.dataset.revoke); refreshMachines() }))
+        machinesBox.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => {
+          const nonce = b.getAttribute('data-revoke'); if (!nonce) return
+          await id.selfVaultRevoke(nonce); refreshMachines()
+        }))
         updatePresence(list.map((d) => d.sub))
       } catch { machinesBox.innerHTML = `<span class="status">${esc(svt('machines_none'))}</span>` }
     }
     refreshMachines()
     _svPresenceTimer = setInterval(() => {
-      const subs = [...machinesBox.querySelectorAll('.sv-machine-row')].map((r) => r.dataset.sub)
+      const subs = [...machinesBox.querySelectorAll('.sv-machine-row')].map((r) => r.getAttribute('data-sub')).filter((x) => x !== null)
       if (subs.length) updatePresence(subs)
     }, 30000)
   }
@@ -1140,6 +1319,7 @@ async function selfVaultMode () {
    códigos de emparejamiento y los enlaces viejos sigan funcionando. El token viaja en
    el `#fragment`, que nunca llega a ningún servidor: se traslada tal cual. */
 const CONSOLE_URL = 'https://vault.dotrino.com/dispositivos'
+/** @param {unknown} data */
 function redirectToConsole (data) {
   const b64 = (location.hash.match(/#vault=([^&]+)/) || [])[1]
   location.replace(b64 ? `${CONSOLE_URL}#vault=${b64}` : CONSOLE_URL)
@@ -1150,6 +1330,8 @@ function redirectToConsole (data) {
    del dueño, no un efecto colateral de pulsar algo en un modal. Hasta que no le das a
    guardar aquí, no existe nada — antes el modal creaba un «Perfil sin nombre» al vuelo.
    Y solo el NOMBRE es público: lo demás nace oculto y tú decides si lo enseñas. */
+/** Los datos opcionales que se pueden poner al crear un perfil. */
+const EXTRA_FIELDS = /** @type {const} */ (['nombres', 'apellidos', 'email', 'telefono', 'direccion'])
 const CREATE_I18N = {
   es: {
     title: 'Crear un perfil',
@@ -1206,14 +1388,14 @@ const LOGIN_I18N = {
     needPass: 'Escribe la contraseña.',
     badAddress: 'Esa dirección no tiene la forma nombre@AB12-CD34-EF56.',
     failed: 'La dirección o la contraseña no son correctas.',
-    tooMany: (t) => `Demasiados intentos seguidos. Vuelve a probar en ${t}.`,
+    tooMany: (/** @type {string} */ t) => `Demasiados intentos seguidos. Vuelve a probar en ${t}.`,
     noVault: 'Ahora mismo no hay ninguna bóveda encendida en esa dirección. Enciéndela y vuelve a intentarlo.',
     unavailable: 'Esa bóveda no tiene ninguna entrada con contraseña.',
     badReply: 'Lo que contestó no cuadra con esa dirección, así que no se entró.',
     other: 'No se pudo entrar: ',
     done: 'Listo. Ya estás dentro.',
-    mins: (n) => `${n} minuto${n === 1 ? '' : 's'}`,
-    secs: (n) => `${n} segundo${n === 1 ? '' : 's'}`
+    mins: (/** @type {number} */ n) => `${n} minuto${n === 1 ? '' : 's'}`,
+    secs: (/** @type {number} */ n) => `${n} segundo${n === 1 ? '' : 's'}`
   },
   en: {
     title: 'Sign in with your password',
@@ -1231,14 +1413,14 @@ const LOGIN_I18N = {
     needPass: 'Type the password.',
     badAddress: 'That address does not look like name@AB12-CD34-EF56.',
     failed: 'That address or password is not right.',
-    tooMany: (t) => `Too many tries in a row. Try again in ${t}.`,
+    tooMany: (/** @type {string} */ t) => `Too many tries in a row. Try again in ${t}.`,
     noVault: 'No vault is answering at that address right now. Turn yours on and try again.',
     unavailable: 'That vault has no password sign-in.',
     badReply: 'What answered does not match that address, so you were not let in.',
     other: 'Could not sign in: ',
     done: 'Done. You are in.',
-    mins: (n) => `${n} minute${n === 1 ? '' : 's'}`,
-    secs: (n) => `${n} second${n === 1 ? '' : 's'}`
+    mins: (/** @type {number} */ n) => `${n} minute${n === 1 ? '' : 's'}`,
+    secs: (/** @type {number} */ n) => `${n} second${n === 1 ? '' : 's'}`
   }
 }
 
@@ -1275,13 +1457,14 @@ async function loginMode () {
   </div>`)
   wireLangReload()
 
-  const msg = (message, kind = 'bad') => { document.getElementById('lg-msg').innerHTML = `<div class="banner ${kind}">${esc(message)}</div>` }
-  const field = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id))
+  const msg = (/** @type {string} */ message, kind = 'bad') => { byId('lg-msg').innerHTML = `<div class="banner ${kind}">${esc(message)}</div>` }
+  const field = (/** @type {string} */ id) => byId(id, HTMLInputElement)
   field('lg-addr').focus()
   field('lg-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') enter() })
-  document.getElementById('lg-go').onclick = enter
+  byId('lg-go').onclick = enter
 
   /** «Vuelve a probar en…» en palabras, no en milisegundos. */
+  /** @param {number} ms */
   function waitText (ms) {
     const s = Math.max(1, Math.ceil(ms / 1000))
     return s >= 60 ? t.mins(Math.ceil(s / 60)) : t.secs(s)
@@ -1293,7 +1476,9 @@ async function loginMode () {
    * distintas — una contraseña se corrige, una bóveda apagada se enciende, una espera se
    * espera.
    */
-  function explainError (e) {
+  /** @param {unknown} caught */
+  function explainError (caught) {
+    const e = /** @type {CodedError} */ (caught)
     switch (e?.code) {
       case 'login-failed': return t.failed
       case 'too-many-tries': return t.tooMany(waitText(e.waitMs || 60000))
@@ -1301,7 +1486,7 @@ async function loginMode () {
       case 'logins-unavailable': return t.unavailable
       case 'bad-address': case 'bad-user': return t.badAddress
       case 'wrong-account': case 'bad-reply': case 'bad-keys': case 'bad-blob': case 'not-a-member': return t.badReply
-      default: return t.other + (e?.message || e)
+      default: return t.other + errMsg(e)
     }
   }
 
@@ -1310,7 +1495,7 @@ async function loginMode () {
     const password = field('lg-pass').value
     if (!address) return msg(t.needAddr)
     if (!password) return msg(t.needPass)
-    const btn = /** @type {HTMLButtonElement} */ (document.getElementById('lg-go'))
+    const btn = byId('lg-go', HTMLButtonElement)
     btn.disabled = true; btn.textContent = t.entering
     try {
       const id = await Identity.connect()
@@ -1348,7 +1533,7 @@ async function createProfileMode () {
     <details class="cp-more">
       <summary>${esc(t.more)}</summary>
       <p class="muted">${esc(t.moreHelp)}</p>
-      ${['nombres', 'apellidos', 'email', 'telefono', 'direccion'].map((k) => `
+      ${EXTRA_FIELDS.map((k) => `
         <label class="cp-field"><span>${esc(t.f[k])}</span>
           <input id="cp-${k}" type="${k === 'email' ? 'email' : k === 'telefono' ? 'tel' : 'text'}" maxlength="200" /></label>`).join('')}
     </details>
@@ -1360,22 +1545,23 @@ async function createProfileMode () {
   </div>`)
   wireLangReload()
 
-  const msg = () => document.getElementById('cp-msg')
-  document.getElementById('cp-cancel').onclick = () => { location.href = returnUrl || appBase() }
-  document.getElementById('cp-nick').focus()
+  const msg = () => byId('cp-msg')
+  byId('cp-cancel').onclick = () => { location.href = returnUrl || appBase() }
+  byId('cp-nick').focus()
 
-  document.getElementById('cp-save').onclick = async () => {
-    const nick = document.getElementById('cp-nick').value.trim()
+  byId('cp-save').onclick = async () => {
+    const nick = byId('cp-nick', HTMLInputElement).value.trim()
     if (!nick) { msg().innerHTML = `<div class="banner bad">${esc(t.needNick)}</div>`; return }
-    const btn = document.getElementById('cp-save')
+    const btn = byId('cp-save', HTMLButtonElement)
     btn.disabled = true; btn.textContent = t.saving
     try {
       const id = await Identity.connect()
       await id.createProfile(nick)
       // Los datos extra nacen OCULTOS: solo el nombre es público por defecto.
+      /** @type {Record<string, string | boolean>} */
       const patch = {}
-      for (const k of ['nombres', 'apellidos', 'email', 'telefono', 'direccion']) {
-        const v = document.getElementById('cp-' + k).value.trim()
+      for (const k of EXTRA_FIELDS) {
+        const v = byId('cp-' + k, HTMLInputElement).value.trim()
         if (v) { patch[k] = v; patch[k + 'Visible'] = false }
       }
       if (Object.keys(patch).length) await id.updateMe(patch)
@@ -1383,7 +1569,7 @@ async function createProfileMode () {
       setTimeout(() => { location.href = returnUrl || appBase() }, 900)
     } catch (e) {
       btn.disabled = false; btn.textContent = t.save
-      msg().innerHTML = `<div class="banner bad">${esc(t.fail + (e?.message || e))}</div>`
+      msg().innerHTML = `<div class="banner bad">${esc(t.fail + errMsg(e))}</div>`
     }
   }
 }
@@ -1428,7 +1614,7 @@ async function main() {
     mount.innerHTML = `<div class="validate-wrap">${banner}${content}<div id="prof"></div></div>`
     if (p.pubkey) {
       const el = makeProfile({ pubkey: p.pubkey, name: p.nickname, mode: 'edit', modal: false })
-      document.getElementById('prof').appendChild(el)
+      byId('prof').appendChild(el)
       try { const { provider } = await connectProvider(); el.provider = provider } catch { /* reputación opcional */ }
     }
     return
@@ -1440,19 +1626,34 @@ async function main() {
   }
 
   // ── RATE (#pubkey) o SELF (sin hash): perfil modal, requiere identidad ──
-  let id, provider
+  /** @type {Identity} */
+  let id
+  /** @type {ProfileProvider} */
+  let provider
   try { ({ id, provider } = await connectProvider()) } catch {
     showState(svt('err_noid_title'), `<p>${svt('err_noid_body')}</p>`)
     return
   }
 
-  let pubkey, name, since, mode
+  /** @type {string | null | undefined} */
+  let pubkey
+  /** @type {string | null | undefined} */
+  let name
+  /** @type {string | undefined} */
+  let since
+  /** @type {string} */
+  let mode
   if (data.mode === 'rate') {
     pubkey = data.pubkey; name = data.name; since = data.since; mode = 'edit'
   } else {
     // Siempre hay identidad (el vault crea un perfil al cargar). Usamos el PERFIL ACTIVO.
     const cur = id.currentProfile ? await id.currentProfile().catch(() => null) : null
     pubkey = cur?.pubkey || (id && id.me && id.me.publickey); name = cur?.name || (id && id.me && id.me.nickname); mode = 'self'
+  }
+  // Sin pubkey no hay perfil que pintar: antes se montaba <dotrino-profile pubkey="undefined">.
+  if (!pubkey) {
+    showState(svt('err_noid_title'), `<p>${svt('err_noid_body')}</p>`)
+    return
   }
 
   // SELF (tu perfil): topbar + el componente inline, que YA trae el switcher de
@@ -1465,7 +1666,7 @@ async function main() {
     const el = makeProfile({ pubkey, name, since, mode, modal: false, manage: true })
     el.provider = provider
     document.getElementById('self-prof')?.appendChild(el)
-    renderPinSection(document.getElementById('pin-section'))
+    renderPinSection(byId('pin-section'))
     return
   }
 
