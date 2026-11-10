@@ -247,13 +247,13 @@ function injectVaultStyles () {
     /* ── /create: crear un perfil ── */
     .cp-field { display: flex; flex-direction: column; gap: 4px; margin: 14px 0; }
     .cp-field span { font-weight: 600; font-size: 14px; }
-    .cp-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border, var(--dt-line)); background: var(--bg-1, #fff); color: inherit; font: inherit; }
+    .cp-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--dt-line); background: var(--dt-surface-2); color: inherit; font: inherit; }
     .cp-field small { font-size: 12px; }
     .cp-field input[type="checkbox"] { width: auto; }
     .lg-check { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0; }
     .lg-check input { margin-top: 3px; }
     .lg-check span { font-weight: 600; font-size: 14px; }
-    .lg-other { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--border, var(--dt-line)); }
+    .lg-other { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--dt-line); }
     .lg-other h2 { font-size: 16px; margin: 0 0 6px; }
     .cp-more { margin: 18px 0; }
     .cp-more summary { cursor: pointer; font-weight: 600; }
